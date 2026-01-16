@@ -4,13 +4,18 @@ import type { ControlPanelProps, FilterType, LayoutType } from '../types';
 export function ControlPanel({
   filterState,
   visualizationState,
-  groupAName,
-  groupBName,
+  groupNames,
+  groupKeys,
   onFilterChange,
   onVisualizationChange,
   onApply,
   onExport,
 }: ControlPanelProps) {
+  const numGroups = groupNames.length;
+
+  // Check if current filter is a cluster filter
+  const isClusterFilter = filterState.filterType.endsWith('_cluster');
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <h3 className="text-lg font-semibold mb-4">⚙️ Controls & Filters</h3>
@@ -42,26 +47,37 @@ export function ControlPanel({
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
           >
             <option value="all">Show All Words</option>
-            <option value="group_a">{groupAName}-Emphasized</option>
-            <option value="group_b">{groupBName}-Emphasized</option>
-            <option value="balanced">Balanced</option>
-            <option value="both">Words in Both</option>
-            <option value="group_a_cluster">🔴 {groupAName} Cluster Group</option>
-            <option value="group_b_cluster">🔵 {groupBName} Cluster Group</option>
+            {numGroups > 1 && (
+              <>
+                {/* Group-emphasized filters */}
+                {groupNames.map((name, i) => (
+                  <option key={`${groupKeys[i]}_emphasis`} value={groupKeys[i]}>
+                    {name}-Emphasized
+                  </option>
+                ))}
+                <option value="balanced">Balanced</option>
+                <option value="in_all">Words in All Groups</option>
+              </>
+            )}
+            {/* Cluster filters */}
+            {groupNames.map((name, i) => (
+              <option key={`${groupKeys[i]}_cluster`} value={`${groupKeys[i]}_cluster`}>
+                🔴 {name} Cluster Group
+              </option>
+            ))}
           </select>
         </div>
 
         {/* Cluster Number (shown only for cluster filters) */}
-        {(filterState.filterType === 'group_a_cluster' || 
-          filterState.filterType === 'group_b_cluster') && (
+        {isClusterFilter && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Cluster #
             </label>
             <select
               value={filterState.clusterNumber}
-              onChange={(e) => onFilterChange({ 
-                clusterNumber: e.target.value === 'all' ? 'all' : parseInt(e.target.value) 
+              onChange={(e) => onFilterChange({
+                clusterNumber: e.target.value === 'all' ? 'all' : parseInt(e.target.value)
               })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             >

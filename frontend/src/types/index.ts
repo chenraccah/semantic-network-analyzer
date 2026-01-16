@@ -16,27 +16,18 @@ export interface WordNode {
   eigenvector: number;
 }
 
+// Dynamic comparison node - keys are generated based on group names
 export interface ComparisonNode {
   word: string;
-  group_a_count: number;
-  group_b_count: number;
-  group_a_normalized: number;
-  group_b_normalized: number;
-  difference: number;
   avg_normalized: number;
-  in_both: boolean;
-  group_a_cluster: number;
-  group_b_cluster: number;
-  group_a_degree: number;
-  group_a_strength: number;
-  group_a_betweenness: number;
-  group_a_closeness: number;
-  group_a_eigenvector: number;
-  group_b_degree: number;
-  group_b_strength: number;
-  group_b_betweenness: number;
-  group_b_closeness: number;
-  group_b_eigenvector: number;
+  in_all?: boolean;      // For multi-group: word appears in all groups
+  in_both?: boolean;     // For 2 groups: backwards compatibility
+  group_count?: number;  // Number of groups this word appears in
+  difference?: number;   // For 2 groups: normalized difference
+  // Dynamic keys per group: {group_key}_count, {group_key}_normalized,
+  // {group_key}_cluster, {group_key}_degree, {group_key}_strength,
+  // {group_key}_betweenness, {group_key}_closeness, {group_key}_eigenvector
+  [key: string]: string | number | boolean | undefined;
 }
 
 export interface NetworkEdge {
@@ -59,27 +50,35 @@ export interface WordPair {
   difference: number;
 }
 
+// Dynamic stats - keys are generated based on group names
 export interface NetworkStats {
   total_words: number;
-  words_in_both: number;
-  group_a_only: number;
-  group_b_only: number;
+  words_in_all?: number;   // Words in all groups
+  words_in_both?: number;  // For 2 groups: backwards compatibility
   total_edges: number;
-  group_a_clusters: number;
-  group_b_clusters: number;
+  // Dynamic keys per group: {group_key}_total, {group_key}_clusters, {group_key}_only
+  [key: string]: number | undefined;
 }
 
 export interface AnalysisResult {
   success: boolean;
-  comparison_data: ComparisonNode[];
+  analysis_data: ComparisonNode[];  // Multi-group uses analysis_data
+  comparison_data?: ComparisonNode[]; // Legacy 2-group uses comparison_data
   edges: NetworkEdge[];
   stats: NetworkStats;
-  group_a_name: string;
-  group_b_name: string;
-  num_texts_a: number;
-  num_texts_b: number;
+  group_names: string[];
+  group_keys: string[];
+  num_groups: number;
+  // Legacy 2-group fields for backwards compatibility
+  group_a_name?: string;
+  group_b_name?: string;
+  num_texts_a?: number;
+  num_texts_b?: number;
+  // Dynamic num_texts per group: num_texts_{group_key}
   semantic_enabled?: boolean;
   semantic_edges_added?: number;
+  processing_time?: number;
+  [key: string]: any;
 }
 
 export interface WordPairResult {
@@ -105,11 +104,14 @@ export interface WordMapping {
   target: string;
 }
 
+export interface GroupConfig {
+  name: string;
+  textColumn: number;
+  file?: File;
+}
+
 export interface AnalysisConfig {
-  groupAName: string;
-  groupBName: string;
-  textColumnA: number;
-  textColumnB: number;
+  groups: GroupConfig[];
   minFrequency: number;
   minScoreThreshold: number;
   clusterMethod: 'louvain' | 'spectral';
@@ -124,16 +126,15 @@ export interface AnalysisConfig {
 
 export type LayoutType = 'force' | 'clustered';
 
-export type FilterType = 
-  | 'all' 
-  | 'group_a' 
-  | 'group_b' 
-  | 'balanced' 
-  | 'both' 
-  | 'group_a_cluster' 
-  | 'group_b_cluster';
+// Filter types - dynamic group filters use group_key pattern
+export type FilterType =
+  | 'all'
+  | 'balanced'
+  | 'in_all'       // Words in all groups
+  | string;        // Dynamic: '{group_key}' or '{group_key}_cluster'
 
-export type ColorMode = 'emphasis' | 'group_a_cluster' | 'group_b_cluster';
+// Color modes - dynamic group clusters use group_key pattern
+export type ColorMode = 'emphasis' | string;  // Dynamic: '{group_key}_cluster'
 
 export interface FilterState {
   filterType: FilterType;
@@ -163,16 +164,16 @@ export interface NetworkGraphProps {
   edges: NetworkEdge[];
   filterState: FilterState;
   visualizationState: VisualizationState;
-  groupAName: string;
-  groupBName: string;
+  groupNames: string[];
+  groupKeys: string[];
   onNodeClick?: (word: string) => void;
 }
 
 export interface DataTableProps {
   data: ComparisonNode[];
   filterState: FilterState;
-  groupAName: string;
-  groupBName: string;
+  groupNames: string[];
+  groupKeys: string[];
   onToggleVisibility: (word: string) => void;
   onSearch: (query: string) => void;
 }
@@ -180,8 +181,8 @@ export interface DataTableProps {
 export interface ControlPanelProps {
   filterState: FilterState;
   visualizationState: VisualizationState;
-  groupAName: string;
-  groupBName: string;
+  groupNames: string[];
+  groupKeys: string[];
   onFilterChange: (filter: Partial<FilterState>) => void;
   onVisualizationChange: (viz: Partial<VisualizationState>) => void;
   onApply: () => void;

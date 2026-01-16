@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Settings, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
-import type { AnalysisConfig } from '../types';
+import type { AnalysisConfig, GroupConfig } from '../types';
 
 interface ConfigPanelProps {
   config: AnalysisConfig;
   onChange: (config: AnalysisConfig) => void;
+  onGroupConfigChange?: (index: number, changes: Partial<GroupConfig>) => void;
 }
 
-export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
+export function ConfigPanel({ config, onChange, onGroupConfigChange }: ConfigPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [newMappingSource, setNewMappingSource] = useState('');
   const [newMappingTarget, setNewMappingTarget] = useState('');
@@ -66,48 +67,40 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
       {/* Content */}
       {isExpanded && (
         <div className="px-6 pb-6 space-y-6 border-t">
-          {/* Basic Settings */}
+          {/* Group Settings */}
           <div className="pt-4">
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Basic Settings</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Group A Name</label>
-                <input
-                  type="text"
-                  value={config.groupAName}
-                  onChange={(e) => handleChange('groupAName', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Group B Name</label>
-                <input
-                  type="text"
-                  value={config.groupBName}
-                  onChange={(e) => handleChange('groupBName', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">{config.groupAName} Text Column</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={config.textColumnA}
-                  onChange={(e) => handleChange('textColumnA', parseInt(e.target.value) || 0)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">{config.groupBName} Text Column</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={config.textColumnB}
-                  onChange={(e) => handleChange('textColumnB', parseInt(e.target.value) || 0)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-                />
-              </div>
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Group Settings</h3>
+            <div className="space-y-4">
+              {config.groups.map((group, index) => (
+                <div key={index} className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-gray-50 rounded-lg">
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Group {index + 1} Name</label>
+                    <input
+                      type="text"
+                      value={group.name}
+                      onChange={(e) => onGroupConfigChange?.(index, { name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">{group.name} Text Column</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={group.textColumn}
+                      onChange={(e) => onGroupConfigChange?.(index, { textColumn: parseInt(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Basic Settings */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Analysis Settings</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Min Score Threshold (%)</label>
                 <input

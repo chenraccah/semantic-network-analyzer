@@ -35,20 +35,27 @@ export async function previewFile(
 }
 
 /**
- * Analyze comparison between two groups
+ * Analyze multiple groups (1 to N)
  */
-export async function analyzeComparison(
-  fileA: File,
-  fileB: File,
+export async function analyzeMultiGroup(
+  files: File[],
   config: AnalysisConfig
 ): Promise<AnalysisResult> {
   const formData = new FormData();
-  formData.append('file_a', fileA);
-  formData.append('file_b', fileB);
-  formData.append('group_a_name', config.groupAName);
-  formData.append('group_b_name', config.groupBName);
-  formData.append('text_column_a', String(config.textColumnA));
-  formData.append('text_column_b', String(config.textColumnB));
+
+  // Add files with indexed keys
+  files.forEach((file, index) => {
+    formData.append(`file_${index}`, file);
+  });
+
+  // Add group configs as JSON
+  const groupConfigs = config.groups.map(g => ({
+    name: g.name,
+    text_column: g.textColumn
+  }));
+  formData.append('group_configs', JSON.stringify(groupConfigs));
+
+  // Add other config options
   formData.append('min_frequency', String(config.minFrequency));
   formData.append('min_score_threshold', String(config.minScoreThreshold));
   formData.append('cluster_method', config.clusterMethod);
@@ -57,8 +64,26 @@ export async function analyzeComparison(
   formData.append('use_semantic', String(config.useSemantic));
   formData.append('semantic_threshold', String(config.semanticThreshold));
 
-  const response = await api.post<AnalysisResult>('/analyze/compare', formData);
+  const response = await api.post<AnalysisResult>('/analyze/multi', formData);
   return response.data;
+}
+
+/**
+ * Analyze comparison between two groups (legacy)
+ */
+export async function analyzeComparison(
+  fileA: File,
+  fileB: File,
+  config: AnalysisConfig
+): Promise<AnalysisResult> {
+  // Use the multi-group endpoint with 2 groups
+  return analyzeMultiGroup([fileA, fileB], {
+    ...config,
+    groups: [
+      { name: config.groups[0]?.name || 'Group A', textColumn: config.groups[0]?.textColumn || 1 },
+      { name: config.groups[1]?.name || 'Group B', textColumn: config.groups[1]?.textColumn || 1 }
+    ]
+  });
 }
 
 /**
@@ -67,15 +92,15 @@ export async function analyzeComparison(
 export async function analyzeWordPairs(
   fileA: File,
   fileB: File,
-  config: Pick<AnalysisConfig, 'groupAName' | 'groupBName' | 'textColumnA' | 'textColumnB' | 'wordMappings' | 'deleteWords'>
+  config: Pick<AnalysisConfig, 'groups' | 'wordMappings' | 'deleteWords'>
 ): Promise<WordPairResult> {
   const formData = new FormData();
   formData.append('file_a', fileA);
   formData.append('file_b', fileB);
-  formData.append('group_a_name', config.groupAName);
-  formData.append('group_b_name', config.groupBName);
-  formData.append('text_column_a', String(config.textColumnA));
-  formData.append('text_column_b', String(config.textColumnB));
+  formData.append('group_a_name', config.groups[0]?.name || 'Group A');
+  formData.append('group_b_name', config.groups[1]?.name || 'Group B');
+  formData.append('text_column_a', String(config.groups[0]?.textColumn || 1));
+  formData.append('text_column_b', String(config.groups[1]?.textColumn || 1));
   formData.append('word_mappings', JSON.stringify(config.wordMappings));
   formData.append('delete_words', JSON.stringify(config.deleteWords));
 

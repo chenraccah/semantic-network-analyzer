@@ -12,7 +12,7 @@ import os
 import json
 import time
 
-from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, get_semantic_analyzer
+from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, MultiGroupAnalyzer, get_semantic_analyzer
 from core.config import settings
 
 router = APIRouter()
@@ -267,6 +267,125 @@ async def analyze_comparison(
             **results,
             "num_texts_a": len(texts_a),
             "num_texts_b": len(texts_b),
+            "semantic_enabled": use_semantic_bool,
+            "semantic_edges_added": semantic_edges_added,
+            "processing_time": round(total_time, 2)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze/multi")
+async def analyze_multi_group(
+    group_configs: str = Form(...),  # JSON array: [{name, text_column}, ...]
+    min_frequency: int = Form(1),
+    min_score_threshold: float = Form(2.0),
+    cluster_method: str = Form("louvain"),
+    word_mappings: str = Form("{}"),
+    delete_words: str = Form("[]"),
+    use_semantic: str = Form("false"),
+    semantic_threshold: float = Form(0.5),
+    file_0: UploadFile = File(None),
+    file_1: UploadFile = File(None),
+    file_2: UploadFile = File(None),
+    file_3: UploadFile = File(None),
+    file_4: UploadFile = File(None),
+):
+    """
+    Analyze 1 to N groups of text data.
+
+    Args:
+        group_configs: JSON array of group configurations [{name, text_column}, ...]
+        min_frequency: Minimum word frequency
+        min_score_threshold: Minimum normalized score threshold
+        cluster_method: Clustering method
+        word_mappings: JSON string of word mappings
+        delete_words: JSON string of words to delete
+        use_semantic: Enable semantic similarity edges
+        semantic_threshold: Minimum similarity for semantic edges (0-1)
+        file_0 to file_4: Uploaded files for each group
+
+    Returns:
+        Analysis results for all groups
+    """
+    try:
+        start_time = time.time()
+
+        # Parse configurations
+        configs = json.loads(group_configs)
+        mappings = json.loads(word_mappings)
+        deletions = json.loads(delete_words)
+
+        # Collect files in order
+        all_files = [file_0, file_1, file_2, file_3, file_4]
+        files = [f for f in all_files[:len(configs)] if f is not None]
+
+        if len(files) != len(configs):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Expected {len(configs)} files, got {len(files)}"
+            )
+
+        if len(files) == 0:
+            raise HTTPException(status_code=400, detail="At least one file is required")
+
+        # Read texts from all files
+        t1 = time.time()
+        texts_list = []
+        group_names = []
+        for i, (file, config) in enumerate(zip(files, configs)):
+            text_column = config.get('text_column', 1)
+            texts = read_file_texts(file, text_column)
+            if not texts:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No texts found in file for group {config.get('name', f'Group {i+1}')}"
+                )
+            texts_list.append(texts)
+            group_names.append(config.get('name', f'Group {i+1}'))
+        print(f"[TIMING] File reading: {time.time() - t1:.2f}s")
+
+        # Create multi-group analyzer
+        analyzer = MultiGroupAnalyzer(
+            group_names=group_names,
+            word_mappings=mappings,
+            delete_words=set(deletions),
+            unify_plurals=True
+        )
+
+        # Run analysis
+        t2 = time.time()
+        results = analyzer.analyze(
+            texts_list=texts_list,
+            min_frequency=min_frequency,
+            min_score_threshold=min_score_threshold,
+            cluster_method=cluster_method
+        )
+        print(f"[TIMING] Co-occurrence analysis: {time.time() - t2:.2f}s")
+
+        # Add semantic edges if enabled
+        use_semantic_bool = use_semantic.lower() == "true"
+        semantic_edges_added = 0
+        if use_semantic_bool:
+            t3 = time.time()
+            semantic_analyzer = get_semantic_analyzer()
+            for builder in analyzer.builders:
+                semantic_edges_added += builder.add_semantic_edges(
+                    semantic_analyzer, threshold=semantic_threshold
+                )
+            print(f"[TIMING] Semantic analysis: {time.time() - t3:.2f}s")
+
+        total_time = time.time() - start_time
+        print(f"[TIMING] Total: {total_time:.2f}s")
+
+        # Build response with text counts
+        num_texts = {f"num_texts_{analyzer.group_keys[i]}": len(texts_list[i]) for i in range(len(texts_list))}
+
+        return {
+            "success": True,
+            **results,
+            **num_texts,
             "semantic_enabled": use_semantic_bool,
             "semantic_edges_added": semantic_edges_added,
             "processing_time": round(total_time, 2)

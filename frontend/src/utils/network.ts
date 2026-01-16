@@ -25,8 +25,8 @@ export const EMPHASIS_COLORS = {
 /**
  * Get emphasis type based on difference score
  */
-export function getEmphasisType(difference: number): 'group_a' | 'group_b' | 'balanced' {
-  if (Math.abs(difference) < 10) return 'balanced';
+export function getEmphasisType(difference: number | undefined): 'group_a' | 'group_b' | 'balanced' {
+  if (difference === undefined || Math.abs(difference) < 10) return 'balanced';
   return difference > 0 ? 'group_a' : 'group_b';
 }
 
@@ -36,25 +36,20 @@ export function getEmphasisType(difference: number): 'group_a' | 'group_b' | 'ba
 export function getNodeColor(
   node: ComparisonNode,
   colorMode: ColorMode,
-  groupAClusterKey: string = 'group_a_cluster',
-  groupBClusterKey: string = 'group_b_cluster'
+  _groupKeys: string[] = []
 ): string {
-  if (colorMode === 'group_a_cluster') {
-    const cluster = (node as any)[groupAClusterKey] ?? -1;
-    return cluster >= 0 && cluster < CLUSTER_COLORS.length 
-      ? CLUSTER_COLORS[cluster] 
+  // Check if it's a cluster mode (ends with _cluster)
+  if (colorMode.endsWith('_cluster')) {
+    const clusterKey = colorMode;  // e.g., "group_1_cluster"
+    const cluster = (node as any)[clusterKey] ?? -1;
+    return cluster >= 0 && cluster < CLUSTER_COLORS.length
+      ? CLUSTER_COLORS[cluster]
       : '#ccc';
   }
-  
-  if (colorMode === 'group_b_cluster') {
-    const cluster = (node as any)[groupBClusterKey] ?? -1;
-    return cluster >= 0 && cluster < CLUSTER_COLORS.length 
-      ? CLUSTER_COLORS[cluster] 
-      : '#ccc';
-  }
-  
-  // Emphasis mode
-  const emphasis = getEmphasisType(node.difference);
+
+  // Emphasis mode - use difference if available
+  const diff = (node as any).difference;
+  const emphasis = getEmphasisType(diff);
   return EMPHASIS_COLORS[emphasis];
 }
 
@@ -64,24 +59,22 @@ export function getNodeColor(
 export function getNodeSize(
   node: ComparisonNode,
   colorMode: ColorMode,
-  groupABetweennessKey: string = 'group_a_betweenness',
-  groupBBetweennessKey: string = 'group_b_betweenness'
+  _groupKeys: string[] = []
 ): number {
   const MIN_SIZE = 30;
   const MAX_SIZE = 80;
-  
+
   let value: number;
-  
-  if (colorMode === 'group_a_cluster') {
-    value = (node as any)[groupABetweennessKey] ?? 0;
+
+  // Check if it's a cluster mode
+  if (colorMode.endsWith('_cluster')) {
+    // Extract the group key from color mode (e.g., "group_1_cluster" -> "group_1")
+    const groupKey = colorMode.replace('_cluster', '');
+    const betweennessKey = `${groupKey}_betweenness`;
+    value = (node as any)[betweennessKey] ?? 0;
     return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
   }
-  
-  if (colorMode === 'group_b_cluster') {
-    value = (node as any)[groupBBetweennessKey] ?? 0;
-    return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
-  }
-  
+
   // Default: use average normalized score
   value = node.avg_normalized / 100;
   return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
@@ -101,57 +94,59 @@ export function getFontSize(avgNormalized: number, wordLength: number): number {
 export function filterNodes(
   nodes: ComparisonNode[],
   filterState: FilterState,
-  groupANormalizedKey: string = 'group_a_normalized',
-  groupBNormalizedKey: string = 'group_b_normalized',
-  groupAClusterKey: string = 'group_a_cluster',
-  groupBClusterKey: string = 'group_b_cluster'
+  groupKeys: string[] = []
 ): ComparisonNode[] {
   return nodes.filter(node => {
     // Check hidden
     if (filterState.hiddenWords.has(node.word)) return false;
-    
+
     // Check min score
     if (node.avg_normalized < filterState.minScore) return false;
-    
-    // Check perspective filter
-    switch (filterState.filterType) {
-      case 'group_a':
-        if (node.difference <= 10) return false;
-        break;
-      case 'group_b':
-        if (node.difference >= -10) return false;
-        break;
-      case 'balanced':
-        if (Math.abs(node.difference) > 10) return false;
-        break;
-      case 'both':
-        if (!node.in_both) return false;
-        break;
-      case 'group_a_cluster': {
-        const cluster = (node as any)[groupAClusterKey];
-        const normalized = (node as any)[groupANormalizedKey];
-        if (cluster < 0) return false;
-        if (normalized < 2) return false;
-        if (filterState.clusterNumber !== 'all' && cluster !== filterState.clusterNumber) return false;
-        break;
-      }
-      case 'group_b_cluster': {
-        const cluster = (node as any)[groupBClusterKey];
-        const normalized = (node as any)[groupBNormalizedKey];
-        if (cluster < 0) return false;
-        if (normalized < 2) return false;
-        if (filterState.clusterNumber !== 'all' && cluster !== filterState.clusterNumber) return false;
-        break;
-      }
+
+    const filterType = filterState.filterType;
+
+    // Handle cluster filters (e.g., "group_1_cluster")
+    if (filterType.endsWith('_cluster')) {
+      const groupKey = filterType.replace('_cluster', '');
+      const clusterKey = filterType;
+      const normalizedKey = `${groupKey}_normalized`;
+      const cluster = (node as any)[clusterKey];
+      const normalized = (node as any)[normalizedKey];
+      if (cluster < 0) return false;
+      if (normalized < 2) return false;
+      if (filterState.clusterNumber !== 'all' && cluster !== filterState.clusterNumber) return false;
     }
-    
+    // Handle group emphasis filters (matches a group key like "group_1")
+    else if (groupKeys.includes(filterType)) {
+      const normalizedKey = `${filterType}_normalized`;
+      const thisNorm = (node as any)[normalizedKey] ?? 0;
+      // Find max normalized among other groups
+      const otherMaxNorm = Math.max(
+        ...groupKeys
+          .filter(k => k !== filterType)
+          .map(k => (node as any)[`${k}_normalized`] ?? 0)
+      );
+      // Only include if this group is emphasized (higher than others by 10%)
+      if (thisNorm - otherMaxNorm <= 10) return false;
+    }
+    // Handle balanced filter
+    else if (filterType === 'balanced') {
+      const diff = (node as any).difference;
+      if (diff !== undefined && Math.abs(diff) > 10) return false;
+    }
+    // Handle in_all filter
+    else if (filterType === 'in_all') {
+      const inAll = (node as any).in_all ?? (node as any).in_both;
+      if (!inAll) return false;
+    }
+
     // Check search query
     if (filterState.searchQuery) {
       if (!node.word.toLowerCase().includes(filterState.searchQuery.toLowerCase())) {
         return false;
       }
     }
-    
+
     return true;
   });
 }
@@ -161,63 +156,101 @@ export function filterNodes(
  */
 export function exportToCSV(
   data: ComparisonNode[],
-  groupAName: string,
-  groupBName: string,
+  groupNames: string[],
+  groupKeys: string[],
   hiddenWords: Set<string>
 ): string {
-  const headers = [
-    'Word',
-    `${groupAName}_Count`,
-    `${groupBName}_Count`,
-    `${groupAName}_Score`,
-    `${groupBName}_Score`,
-    'Diff',
-    'Avg',
-    'Emphasis',
-    `${groupAName}_Cluster`,
-    `${groupBName}_Cluster`,
-    `${groupAName}_Degree`,
-    `${groupAName}_Strength`,
-    `${groupAName}_Betweenness`,
-    `${groupAName}_Closeness`,
-    `${groupAName}_Eigenvector`,
-    `${groupBName}_Degree`,
-    `${groupBName}_Strength`,
-    `${groupBName}_Betweenness`,
-    `${groupBName}_Closeness`,
-    `${groupBName}_Eigenvector`,
-    'Visible'
-  ];
-  
-  const rows = data.map(node => {
-    const emphasis = Math.abs(node.difference) < 10 ? 'Balanced' : 
-      (node.difference > 0 ? groupAName : groupBName);
-    
-    return [
-      node.word,
-      node.group_a_count,
-      node.group_b_count,
-      node.group_a_normalized,
-      node.group_b_normalized,
-      node.difference,
-      node.avg_normalized,
-      emphasis,
-      node.group_a_cluster >= 0 ? node.group_a_cluster : '',
-      node.group_b_cluster >= 0 ? node.group_b_cluster : '',
-      node.group_a_degree,
-      node.group_a_strength,
-      node.group_a_betweenness,
-      node.group_a_closeness,
-      node.group_a_eigenvector,
-      node.group_b_degree,
-      node.group_b_strength,
-      node.group_b_betweenness,
-      node.group_b_closeness,
-      node.group_b_eigenvector,
-      hiddenWords.has(node.word) ? 'No' : 'Yes'
-    ].join(',');
+  // Build dynamic headers
+  const headers = ['Word'];
+
+  // Add count columns for each group
+  groupKeys.forEach((_key, i) => {
+    headers.push(`${groupNames[i]}_Count`);
   });
-  
+
+  // Add score columns for each group
+  groupKeys.forEach((_key, i) => {
+    headers.push(`${groupNames[i]}_Score`);
+  });
+
+  // Add diff if 2 groups
+  if (groupNames.length === 2) {
+    headers.push('Diff', 'Emphasis');
+  }
+
+  headers.push('Avg');
+
+  if (groupNames.length > 1) {
+    headers.push('Groups');
+  }
+
+  // Add cluster columns
+  groupKeys.forEach((_key, i) => {
+    headers.push(`${groupNames[i]}_Cluster`);
+  });
+
+  // Add metric columns for each group
+  groupKeys.forEach((_key, i) => {
+    headers.push(
+      `${groupNames[i]}_Degree`,
+      `${groupNames[i]}_Strength`,
+      `${groupNames[i]}_Betweenness`,
+      `${groupNames[i]}_Closeness`,
+      `${groupNames[i]}_Eigenvector`
+    );
+  });
+
+  headers.push('Visible');
+
+  const rows = data.map(node => {
+    const values: (string | number)[] = [node.word];
+
+    // Add counts
+    groupKeys.forEach(key => {
+      values.push((node as any)[`${key}_count`] ?? 0);
+    });
+
+    // Add scores
+    groupKeys.forEach(key => {
+      values.push((node as any)[`${key}_normalized`] ?? 0);
+    });
+
+    // Add diff if 2 groups
+    if (groupNames.length === 2) {
+      const diff = (node as any).difference ?? 0;
+      const emphasis = Math.abs(diff) < 10 ? 'Balanced' :
+        (diff > 0 ? groupNames[0] : groupNames[1]);
+      values.push(diff, emphasis);
+    }
+
+    values.push(node.avg_normalized);
+
+    if (groupNames.length > 1) {
+      values.push((node as any).group_count ?? '-');
+    }
+
+    // Add clusters
+    groupKeys.forEach(key => {
+      const cluster = (node as any)[`${key}_cluster`];
+      values.push(cluster >= 0 ? cluster : '');
+    });
+
+    // Add metrics
+    groupKeys.forEach(key => {
+      values.push(
+        (node as any)[`${key}_degree`] ?? 0,
+        (node as any)[`${key}_strength`] ?? 0,
+        (node as any)[`${key}_betweenness`] ?? 0,
+        (node as any)[`${key}_closeness`] ?? 0,
+        (node as any)[`${key}_eigenvector`] ?? 0
+      );
+    });
+
+    values.push(hiddenWords.has(node.word) ? 'No' : 'Yes');
+
+    return values.join(',');
+  });
+
   return [headers.join(','), ...rows].join('\n');
 }
 

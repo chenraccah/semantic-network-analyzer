@@ -1,14 +1,14 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
-import type { NetworkGraphProps, ComparisonNode, NetworkEdge } from '../types';
-import { 
-  filterNodes, 
-  getNodeColor, 
-  getNodeSize, 
+import type { NetworkGraphProps } from '../types';
+import {
+  filterNodes,
+  getNodeColor,
+  getNodeSize,
   getFontSize,
   CLUSTER_COLORS,
-  EMPHASIS_COLORS 
+  EMPHASIS_COLORS
 } from '../utils/network';
 
 export function NetworkGraph({
@@ -16,27 +16,18 @@ export function NetworkGraph({
   edges,
   filterState,
   visualizationState,
-  groupAName,
-  groupBName,
+  groupNames,
+  groupKeys,
 }: NetworkGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
 
-  // Dynamic key names based on group names
-  const groupAKey = groupAName.toLowerCase().replace(/\s+/g, '_');
-  const groupBKey = groupBName.toLowerCase().replace(/\s+/g, '_');
+  const numGroups = groupNames.length;
 
   // Filter nodes
   const filteredNodes = useMemo(() => {
-    return filterNodes(
-      nodes,
-      filterState,
-      `${groupAKey}_normalized`,
-      `${groupBKey}_normalized`,
-      `${groupAKey}_cluster`,
-      `${groupBKey}_cluster`
-    );
-  }, [nodes, filterState, groupAKey, groupBKey]);
+    return filterNodes(nodes, filterState, groupKeys);
+  }, [nodes, filterState, groupKeys]);
 
   // Filter edges
   const filteredEdges = useMemo(() => {
@@ -49,19 +40,22 @@ export function NetworkGraph({
   // Create vis.js nodes
   const visNodes = useMemo(() => {
     return filteredNodes.map(node => {
-      const color = getNodeColor(
-        node,
-        visualizationState.colorMode,
-        `${groupAKey}_cluster`,
-        `${groupBKey}_cluster`
-      );
-      const size = getNodeSize(
-        node,
-        visualizationState.colorMode,
-        `${groupAKey}_betweenness`,
-        `${groupBKey}_betweenness`
-      );
+      const color = getNodeColor(node, visualizationState.colorMode, groupKeys);
+      const size = getNodeSize(node, visualizationState.colorMode, groupKeys);
       const fontSize = getFontSize(node.avg_normalized, node.word.length);
+
+      // Build tooltip with dynamic group info
+      let tooltipHtml = `<b>${node.word}</b><br/>`;
+      groupNames.forEach((name, i) => {
+        const key = groupKeys[i];
+        const count = (node as any)[`${key}_count`] ?? 0;
+        const norm = (node as any)[`${key}_normalized`] ?? 0;
+        tooltipHtml += `${name}: ${count} (${norm}%)<br/>`;
+      });
+      if (numGroups === 2) {
+        const diff = (node as any).difference ?? 0;
+        tooltipHtml += `Diff: ${diff > 0 ? '+' : ''}${diff}%`;
+      }
 
       return {
         id: node.word,
@@ -76,15 +70,11 @@ export function NetworkGraph({
           size: fontSize,
           color: 'black',
           face: 'Arial',
-          bold: true,
         },
-        title: `<b>${node.word}</b><br/>
-          ${groupAName}: ${(node as any)[`${groupAKey}_count`]} (${(node as any)[`${groupAKey}_normalized`]}%)<br/>
-          ${groupBName}: ${(node as any)[`${groupBKey}_count`]} (${(node as any)[`${groupBKey}_normalized`]}%)<br/>
-          Diff: ${node.difference > 0 ? '+' : ''}${node.difference}%`,
+        title: tooltipHtml,
       };
     });
-  }, [filteredNodes, visualizationState.colorMode, groupAName, groupBName, groupAKey, groupBKey]);
+  }, [filteredNodes, visualizationState.colorMode, groupNames, groupKeys, numGroups]);
 
   // Create vis.js edges
   const visEdges = useMemo(() => {
@@ -109,7 +99,7 @@ export function NetworkGraph({
         borderWidthSelected: 3,
       },
       edges: {
-        smooth: { type: 'continuous', roundness: 0.2 },
+        smooth: { enabled: true, type: 'continuous', roundness: 0.2 },
       },
       physics: visualizationState.layout === 'force' ? {
         enabled: true,
@@ -136,8 +126,8 @@ export function NetworkGraph({
     networkRef.current = new Network(
       containerRef.current,
       {
-        nodes: new DataSet(visNodes),
-        edges: new DataSet(visEdges),
+        nodes: new DataSet(visNodes as any),
+        edges: new DataSet(visEdges as any),
       },
       options
     );
@@ -155,36 +145,60 @@ export function NetworkGraph({
 
   // Get color mode label
   const getColorModeLabel = () => {
-    if (visualizationState.colorMode === 'group_a_cluster') {
-      return `${groupAName} Clusters`;
-    }
-    if (visualizationState.colorMode === 'group_b_cluster') {
-      return `${groupBName} Clusters`;
+    if (visualizationState.colorMode.endsWith('_cluster')) {
+      // Extract group name from color mode
+      const groupKey = visualizationState.colorMode.replace('_cluster', '');
+      const groupIndex = groupKeys.indexOf(groupKey);
+      if (groupIndex >= 0) {
+        return `${groupNames[groupIndex]} Clusters`;
+      }
+      return 'Clusters';
     }
     return 'Emphasis Groups';
   };
+
+  // Get current group name for cluster mode
+  const getClusterGroupName = () => {
+    if (visualizationState.colorMode.endsWith('_cluster')) {
+      const groupKey = visualizationState.colorMode.replace('_cluster', '');
+      const groupIndex = groupKeys.indexOf(groupKey);
+      if (groupIndex >= 0) {
+        return groupNames[groupIndex];
+      }
+    }
+    return '';
+  };
+
+  const isClusterMode = visualizationState.colorMode.endsWith('_cluster');
 
   return (
     <div className="p-4">
       {/* Legend */}
       <div className="mb-4 flex flex-wrap items-center gap-4 text-sm">
         <span className="font-medium">🎨 {getColorModeLabel()}:</span>
-        
-        {visualizationState.colorMode === 'emphasis' ? (
-          <>
-            <div className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_a }} />
-              <span>{groupAName}-emphasized</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_b }} />
-              <span>{groupBName}-emphasized</span>
-            </div>
+
+        {!isClusterMode ? (
+          numGroups === 2 ? (
+            <>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_a }} />
+                <span>{groupNames[0]}-emphasized</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_b }} />
+                <span>{groupNames[1]}-emphasized</span>
+              </div>
+              <div className="legend-item">
+                <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.balanced }} />
+                <span>Balanced</span>
+              </div>
+            </>
+          ) : (
             <div className="legend-item">
               <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.balanced }} />
-              <span>Balanced</span>
+              <span>All words</span>
             </div>
-          </>
+          )
         ) : (
           CLUSTER_COLORS.slice(0, 7).map((color, i) => (
             <div key={i} className="legend-item">
@@ -196,10 +210,9 @@ export function NetworkGraph({
       </div>
 
       {/* Size mode info for cluster views */}
-      {(visualizationState.colorMode === 'group_a_cluster' || 
-        visualizationState.colorMode === 'group_b_cluster') && (
+      {isClusterMode && (
         <div className="mb-4 p-2 bg-green-50 border border-green-200 rounded text-sm text-green-800">
-          📏 Node Size: Based on {visualizationState.colorMode === 'group_a_cluster' ? groupAName : groupBName} Betweenness Centrality
+          📏 Node Size: Based on {getClusterGroupName()} Betweenness Centrality
         </div>
       )}
 

@@ -8,16 +8,15 @@ type SortDirection = 'asc' | 'desc';
 export function DataTable({
   data,
   filterState,
-  groupAName,
-  groupBName,
+  groupNames,
+  groupKeys,
   onToggleVisibility,
   onSearch,
 }: DataTableProps) {
   const [sortField, setSortField] = useState<SortField>('avg_normalized');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
-  const groupAKey = groupAName.toLowerCase().replace(/\s+/g, '_');
-  const groupBKey = groupBName.toLowerCase().replace(/\s+/g, '_');
+  const numGroups = groupNames.length;
 
   // Sort and filter data
   const displayData = useMemo(() => {
@@ -38,11 +37,11 @@ export function DataTable({
       if (typeof aVal === 'number' && typeof bVal === 'number') {
         return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
       }
-      
+
       const aStr = String(aVal);
       const bStr = String(bVal);
-      return sortDirection === 'asc' 
-        ? aStr.localeCompare(bStr) 
+      return sortDirection === 'asc'
+        ? aStr.localeCompare(bStr)
         : bStr.localeCompare(aStr);
     });
 
@@ -64,12 +63,13 @@ export function DataTable({
   };
 
   const getEmphasisLabel = (diff: number) => {
+    if (numGroups !== 2) return '-';
     if (Math.abs(diff) < 10) return 'Balanced';
-    return diff > 0 ? groupAName : groupBName;
+    return diff > 0 ? groupNames[0] : groupNames[1];
   };
 
-  const renderClusterBadge = (cluster: number) => {
-    if (cluster < 0) return <span className="text-gray-400">-</span>;
+  const renderClusterBadge = (cluster: number | undefined) => {
+    if (cluster === undefined || cluster < 0) return <span className="text-gray-400">-</span>;
     return <span className={`cluster-badge cluster-${cluster}`}>{cluster}</span>;
   };
 
@@ -105,23 +105,39 @@ export function DataTable({
             <tr>
               <th className="w-20">Show/Hide</th>
               <SortHeader field="word" label="Word" />
-              <SortHeader field={`${groupAKey}_count`} label={`${groupAName} Cnt`} />
-              <SortHeader field={`${groupBKey}_count`} label={`${groupBName} Cnt`} />
-              <SortHeader field={`${groupAKey}_normalized`} label={`${groupAName} %`} />
-              <SortHeader field={`${groupBKey}_normalized`} label={`${groupBName} %`} />
-              <SortHeader field="difference" label="Diff" />
+              {/* Dynamic group columns */}
+              {groupNames.map((name, i) => (
+                <SortHeader key={`${groupKeys[i]}_count`} field={`${groupKeys[i]}_count`} label={`${name} Cnt`} />
+              ))}
+              {groupNames.map((name, i) => (
+                <SortHeader key={`${groupKeys[i]}_normalized`} field={`${groupKeys[i]}_normalized`} label={`${name} %`} />
+              ))}
+              {/* Difference only for 2 groups */}
+              {numGroups === 2 && (
+                <>
+                  <SortHeader field="difference" label="Diff" />
+                  <th>Emphasis</th>
+                </>
+              )}
               <SortHeader field="avg_normalized" label="Avg" />
-              <th>Emphasis</th>
-              <SortHeader field={`${groupAKey}_cluster`} label={`${groupAName} Cl`} />
-              <SortHeader field={`${groupBKey}_cluster`} label={`${groupBName} Cl`} />
-              <SortHeader field={`${groupAKey}_betweenness`} label={`${groupAName} Bet`} />
-              <SortHeader field={`${groupBKey}_betweenness`} label={`${groupBName} Bet`} />
+              {numGroups > 1 && (
+                <SortHeader field="group_count" label="# Groups" />
+              )}
+              {/* Cluster columns */}
+              {groupNames.map((name, i) => (
+                <SortHeader key={`${groupKeys[i]}_cluster`} field={`${groupKeys[i]}_cluster`} label={`${name} Cl`} />
+              ))}
+              {/* Betweenness columns */}
+              {groupNames.map((name, i) => (
+                <SortHeader key={`${groupKeys[i]}_betweenness`} field={`${groupKeys[i]}_betweenness`} label={`${name} Bet`} />
+              ))}
             </tr>
           </thead>
           <tbody>
             {displayData.map(node => {
               const isHidden = filterState.hiddenWords.has(node.word);
-              
+              const diff = (node as any).difference ?? 0;
+
               return (
                 <tr key={node.word} className={isHidden ? 'row-hidden' : ''}>
                   <td className="text-center">
@@ -133,21 +149,37 @@ export function DataTable({
                     </button>
                   </td>
                   <td className="font-medium">{node.word}</td>
-                  <td>{(node as any)[`${groupAKey}_count`]}</td>
-                  <td>{(node as any)[`${groupBKey}_count`]}</td>
-                  <td>{(node as any)[`${groupAKey}_normalized`]}%</td>
-                  <td>{(node as any)[`${groupBKey}_normalized`]}%</td>
-                  <td className={`font-semibold ${getEmphasisClass(node.difference)}`}>
-                    {node.difference > 0 ? '+' : ''}{node.difference}%
-                  </td>
+                  {/* Dynamic group count columns */}
+                  {groupKeys.map(key => (
+                    <td key={`${key}_count`}>{(node as any)[`${key}_count`] ?? 0}</td>
+                  ))}
+                  {/* Dynamic group normalized columns */}
+                  {groupKeys.map(key => (
+                    <td key={`${key}_normalized`}>{(node as any)[`${key}_normalized`] ?? 0}%</td>
+                  ))}
+                  {/* Difference only for 2 groups */}
+                  {numGroups === 2 && (
+                    <>
+                      <td className={`font-semibold ${getEmphasisClass(diff)}`}>
+                        {diff > 0 ? '+' : ''}{diff}%
+                      </td>
+                      <td className={getEmphasisClass(diff)}>
+                        {getEmphasisLabel(diff)}
+                      </td>
+                    </>
+                  )}
                   <td>{node.avg_normalized}%</td>
-                  <td className={getEmphasisClass(node.difference)}>
-                    {getEmphasisLabel(node.difference)}
-                  </td>
-                  <td>{renderClusterBadge((node as any)[`${groupAKey}_cluster`])}</td>
-                  <td>{renderClusterBadge((node as any)[`${groupBKey}_cluster`])}</td>
-                  <td>{(node as any)[`${groupAKey}_betweenness`]?.toFixed(3) ?? '-'}</td>
-                  <td>{(node as any)[`${groupBKey}_betweenness`]?.toFixed(3) ?? '-'}</td>
+                  {numGroups > 1 && (
+                    <td>{(node as any).group_count ?? '-'}</td>
+                  )}
+                  {/* Dynamic cluster columns */}
+                  {groupKeys.map(key => (
+                    <td key={`${key}_cluster`}>{renderClusterBadge((node as any)[`${key}_cluster`])}</td>
+                  ))}
+                  {/* Dynamic betweenness columns */}
+                  {groupKeys.map(key => (
+                    <td key={`${key}_betweenness`}>{(node as any)[`${key}_betweenness`]?.toFixed(3) ?? '-'}</td>
+                  ))}
                 </tr>
               );
             })}
