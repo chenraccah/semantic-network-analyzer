@@ -198,22 +198,6 @@ class NetworkBuilder:
             'num_components': nx.number_connected_components(self.graph)
         }
     
-    def get_edges_list(self) -> List[Dict]:
-        """
-        Get list of edges with weights.
-        
-        Returns:
-            List of edge dictionaries
-        """
-        edges = []
-        for (word1, word2), weight in self.edges.items():
-            edges.append({
-                'from': word1,
-                'to': word2,
-                'weight': weight
-            })
-        return edges
-    
     def get_nodes_data(self, metrics: Dict[str, Dict], clusters: Dict[str, int]) -> List[Dict]:
         """
         Get list of nodes with all data.
@@ -244,5 +228,83 @@ class NetworkBuilder:
         
         # Sort by normalized score
         nodes.sort(key=lambda x: x['normalized'], reverse=True)
-        
+
         return nodes
+
+    def add_semantic_edges(
+        self,
+        semantic_analyzer,
+        threshold: float = 0.5,
+        weight_multiplier: float = 10.0
+    ) -> int:
+        """
+        Add semantic similarity edges to the network.
+
+        Args:
+            semantic_analyzer: SemanticAnalyzer instance
+            threshold: Minimum similarity to create an edge (0-1)
+            weight_multiplier: Multiplier to convert similarity to edge weight
+
+        Returns:
+            Number of semantic edges added
+        """
+        if not self.graph or len(self.graph.nodes()) < 2:
+            return 0
+
+        words = list(self.graph.nodes())
+        semantic_edges = semantic_analyzer.get_semantic_edges(words, threshold)
+
+        added = 0
+        for edge in semantic_edges:
+            word1, word2 = edge['from'], edge['to']
+            similarity = edge['similarity']
+            weight = int(similarity * weight_multiplier)
+
+            if self.graph.has_edge(word1, word2):
+                # Merge with existing co-occurrence edge
+                current_weight = self.graph[word1][word2].get('weight', 0)
+                self.graph[word1][word2]['weight'] = current_weight + weight
+                self.graph[word1][word2]['semantic_similarity'] = similarity
+            else:
+                # Add new semantic-only edge
+                self.graph.add_edge(
+                    word1, word2,
+                    weight=weight,
+                    semantic_similarity=similarity,
+                    edge_type='semantic'
+                )
+                # Also track in edges dict
+                pair = tuple(sorted([word1, word2]))
+                self.edges[pair] = self.edges.get(pair, 0) + weight
+                added += 1
+
+        return added
+
+    def get_edges_list(self, include_semantic: bool = True) -> List[Dict]:
+        """
+        Get list of edges with weights.
+
+        Args:
+            include_semantic: Whether to include semantic similarity info
+
+        Returns:
+            List of edge dictionaries
+        """
+        edges = []
+        for (word1, word2), weight in self.edges.items():
+            edge_data = {
+                'from': word1,
+                'to': word2,
+                'weight': weight
+            }
+
+            # Add semantic info if available
+            if include_semantic and self.graph and self.graph.has_edge(word1, word2):
+                edge_attrs = self.graph[word1][word2]
+                if 'semantic_similarity' in edge_attrs:
+                    edge_data['semantic_similarity'] = edge_attrs['semantic_similarity']
+                if 'edge_type' in edge_attrs:
+                    edge_data['edge_type'] = edge_attrs['edge_type']
+
+            edges.append(edge_data)
+        return edges

@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:5173",
     ]
     
@@ -31,6 +33,14 @@ class Settings(BaseSettings):
     MIN_WORD_LENGTH: int = 2
     DEFAULT_MIN_FREQUENCY: int = 1
     DEFAULT_MIN_SCORE_THRESHOLD: float = 2.0
+
+    # Semantic Analysis
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # Fast, 80MB model
+    SIMILARITY_THRESHOLD: float = 0.5
+    EMBEDDING_BATCH_SIZE: int = 32
+
+    # Timeouts
+    REQUEST_TIMEOUT: int = 300  # 5 minutes
     
     # Temp files
     TEMP_DIR: str = "/tmp/semantic-network"

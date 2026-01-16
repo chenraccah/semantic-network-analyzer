@@ -11,7 +11,7 @@ import tempfile
 import os
 import json
 
-from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer
+from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, get_semantic_analyzer
 from core.config import settings
 
 router = APIRouter()
@@ -90,11 +90,13 @@ async def analyze_single_group(
     min_frequency: int = Form(1),
     cluster_method: str = Form("louvain"),
     word_mappings: str = Form("{}"),
-    delete_words: str = Form("[]")
+    delete_words: str = Form("[]"),
+    use_semantic: bool = Form(False),
+    semantic_threshold: float = Form(0.5)
 ):
     """
     Analyze a single group's text data.
-    
+
     Args:
         file: Excel/CSV file with text data
         group_name: Name for this group
@@ -103,7 +105,9 @@ async def analyze_single_group(
         cluster_method: Clustering method
         word_mappings: JSON string of word mappings
         delete_words: JSON string of words to delete
-        
+        use_semantic: Enable semantic similarity edges
+        semantic_threshold: Minimum similarity for semantic edges (0-1)
+
     Returns:
         Network analysis results
     """
@@ -111,43 +115,54 @@ async def analyze_single_group(
         # Parse JSON strings
         mappings = json.loads(word_mappings)
         deletions = json.loads(delete_words)
-        
+
         # Read texts
         texts = read_file_texts(file, text_column)
-        
+
         if not texts:
             raise HTTPException(status_code=400, detail="No texts found in file")
-        
+
         # Create processor and builder
         processor = TextProcessor(
             word_mappings=mappings,
             delete_words=set(deletions),
             unify_plurals=True
         )
-        
+
         builder = NetworkBuilder(processor)
-        
+
         # Build network
         builder.build_network(texts, min_frequency=min_frequency)
-        
+
+        # Add semantic edges if enabled
+        semantic_edges_added = 0
+        if use_semantic:
+            semantic_analyzer = get_semantic_analyzer()
+            semantic_edges_added = builder.add_semantic_edges(
+                semantic_analyzer,
+                threshold=semantic_threshold
+            )
+
         # Calculate metrics
         metrics = builder.calculate_centrality_metrics()
         clusters = builder.detect_clusters(method=cluster_method)
-        
+
         # Get results
         nodes = builder.get_nodes_data(metrics, clusters)
-        edges = builder.get_edges_list()
+        edges = builder.get_edges_list(include_semantic=use_semantic)
         stats = builder.get_network_stats()
-        
+
         return {
             "success": True,
             "group_name": group_name,
             "nodes": nodes,
             "edges": edges,
             "stats": stats,
-            "num_texts": len(texts)
+            "num_texts": len(texts),
+            "semantic_enabled": use_semantic,
+            "semantic_edges_added": semantic_edges_added
         }
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -163,11 +178,13 @@ async def analyze_comparison(
     min_score_threshold: float = Form(2.0),
     cluster_method: str = Form("louvain"),
     word_mappings: str = Form("{}"),
-    delete_words: str = Form("[]")
+    delete_words: str = Form("[]"),
+    use_semantic: bool = Form(False),
+    semantic_threshold: float = Form(0.5)
 ):
     """
     Compare two groups' text data.
-    
+
     Args:
         file_a: Excel/CSV file for group A
         file_b: Excel/CSV file for group B
@@ -179,7 +196,9 @@ async def analyze_comparison(
         cluster_method: Clustering method
         word_mappings: JSON string of word mappings
         delete_words: JSON string of words to delete
-        
+        use_semantic: Enable semantic similarity edges
+        semantic_threshold: Minimum similarity for semantic edges (0-1)
+
     Returns:
         Comparison analysis results
     """
@@ -187,16 +206,16 @@ async def analyze_comparison(
         # Parse JSON strings
         mappings = json.loads(word_mappings)
         deletions = json.loads(delete_words)
-        
+
         # Read texts from both files
         texts_a = read_file_texts(file_a, text_column)
         texts_b = read_file_texts(file_b, text_column)
-        
+
         if not texts_a:
             raise HTTPException(status_code=400, detail=f"No texts found in {group_a_name} file")
         if not texts_b:
             raise HTTPException(status_code=400, detail=f"No texts found in {group_b_name} file")
-        
+
         # Create analyzer
         analyzer = ComparisonAnalyzer(
             group_a_name=group_a_name,
@@ -205,7 +224,7 @@ async def analyze_comparison(
             delete_words=set(deletions),
             unify_plurals=True
         )
-        
+
         # Run analysis
         results = analyzer.analyze(
             texts_a=texts_a,
@@ -214,14 +233,28 @@ async def analyze_comparison(
             min_score_threshold=min_score_threshold,
             cluster_method=cluster_method
         )
-        
+
+        # Add semantic edges if enabled
+        semantic_edges_added = 0
+        if use_semantic:
+            semantic_analyzer = get_semantic_analyzer()
+            # Add semantic edges to both group networks
+            semantic_edges_added += analyzer.builder_a.add_semantic_edges(
+                semantic_analyzer, threshold=semantic_threshold
+            )
+            semantic_edges_added += analyzer.builder_b.add_semantic_edges(
+                semantic_analyzer, threshold=semantic_threshold
+            )
+
         return {
             "success": True,
             **results,
             "num_texts_a": len(texts_a),
-            "num_texts_b": len(texts_b)
+            "num_texts_b": len(texts_b),
+            "semantic_enabled": use_semantic,
+            "semantic_edges_added": semantic_edges_added
         }
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
