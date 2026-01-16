@@ -89,12 +89,22 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-600 mb-1">Text Column (0-indexed)</label>
+                <label className="block text-sm text-gray-600 mb-1">{config.groupAName} Text Column</label>
                 <input
                   type="number"
                   min="0"
-                  value={config.textColumn}
-                  onChange={(e) => handleChange('textColumn', parseInt(e.target.value) || 0)}
+                  value={config.textColumnA}
+                  onChange={(e) => handleChange('textColumnA', parseInt(e.target.value) || 0)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">{config.groupBName} Text Column</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={config.textColumnB}
+                  onChange={(e) => handleChange('textColumnB', parseInt(e.target.value) || 0)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
                 />
               </div>
@@ -212,6 +222,46 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
               ))}
               {config.deleteWords.length === 0 && (
                 <span className="text-sm text-gray-400">No words to delete</span>
+              )}
+            </div>
+          </div>
+
+          {/* Semantic Analysis */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 mb-3">Semantic Analysis</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Use AI embeddings to find semantically related words (e.g., "happy" ↔ "joyful")
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-center">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.useSemantic}
+                    onChange={(e) => handleChange('useSemantic', e.target.checked)}
+                    className="rounded text-primary-500 focus:ring-primary-500"
+                  />
+                  <span className="text-sm text-gray-600">Enable Semantic Similarity</span>
+                </label>
+              </div>
+              {config.useSemantic && (
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    Similarity Threshold (0-1)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={config.semanticThreshold}
+                    onChange={(e) => handleChange('semanticThreshold', parseFloat(e.target.value) || 0.5)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Higher = stricter matching
+                  </p>
+                </div>
               )}
             </div>
           </div>

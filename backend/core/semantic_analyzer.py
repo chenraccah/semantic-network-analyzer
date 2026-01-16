@@ -29,10 +29,26 @@ class SemanticAnalyzer:
 
     def _load_model(self):
         """Load the sentence-transformers model."""
+        import os
         from sentence_transformers import SentenceTransformer
 
         print(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
-        SemanticAnalyzer._model = SentenceTransformer(settings.EMBEDDING_MODEL)
+
+        # Try to load from local cache first (faster, no network)
+        cache_dir = os.path.expanduser("~/.cache/torch/sentence_transformers")
+        model_path = os.path.join(cache_dir, f"sentence-transformers_{settings.EMBEDDING_MODEL}")
+
+        try:
+            if os.path.exists(model_path):
+                print("Loading model from local cache...")
+                SemanticAnalyzer._model = SentenceTransformer(model_path)
+            else:
+                print("Downloading model (first time only)...")
+                SemanticAnalyzer._model = SentenceTransformer(settings.EMBEDDING_MODEL)
+        except Exception as e:
+            print(f"Cache load failed, downloading: {e}")
+            SemanticAnalyzer._model = SentenceTransformer(settings.EMBEDDING_MODEL)
+
         print("Embedding model loaded successfully")
 
     @property

@@ -10,6 +10,7 @@ import pandas as pd
 import tempfile
 import os
 import json
+import time
 
 from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, get_semantic_analyzer
 from core.config import settings
@@ -91,7 +92,7 @@ async def analyze_single_group(
     cluster_method: str = Form("louvain"),
     word_mappings: str = Form("{}"),
     delete_words: str = Form("[]"),
-    use_semantic: bool = Form(False),
+    use_semantic: str = Form("false"),
     semantic_threshold: float = Form(0.5)
 ):
     """
@@ -135,8 +136,9 @@ async def analyze_single_group(
         builder.build_network(texts, min_frequency=min_frequency)
 
         # Add semantic edges if enabled
+        use_semantic_bool = use_semantic.lower() == "true"
         semantic_edges_added = 0
-        if use_semantic:
+        if use_semantic_bool:
             semantic_analyzer = get_semantic_analyzer()
             semantic_edges_added = builder.add_semantic_edges(
                 semantic_analyzer,
@@ -149,7 +151,7 @@ async def analyze_single_group(
 
         # Get results
         nodes = builder.get_nodes_data(metrics, clusters)
-        edges = builder.get_edges_list(include_semantic=use_semantic)
+        edges = builder.get_edges_list(include_semantic=use_semantic_bool)
         stats = builder.get_network_stats()
 
         return {
@@ -159,7 +161,7 @@ async def analyze_single_group(
             "edges": edges,
             "stats": stats,
             "num_texts": len(texts),
-            "semantic_enabled": use_semantic,
+            "semantic_enabled": use_semantic_bool,
             "semantic_edges_added": semantic_edges_added
         }
 
@@ -173,13 +175,14 @@ async def analyze_comparison(
     file_b: UploadFile = File(...),
     group_a_name: str = Form("Group A"),
     group_b_name: str = Form("Group B"),
-    text_column: int = Form(1),
+    text_column_a: int = Form(1),
+    text_column_b: int = Form(1),
     min_frequency: int = Form(1),
     min_score_threshold: float = Form(2.0),
     cluster_method: str = Form("louvain"),
     word_mappings: str = Form("{}"),
     delete_words: str = Form("[]"),
-    use_semantic: bool = Form(False),
+    use_semantic: str = Form("false"),
     semantic_threshold: float = Form(0.5)
 ):
     """
@@ -190,7 +193,8 @@ async def analyze_comparison(
         file_b: Excel/CSV file for group B
         group_a_name: Name for group A
         group_b_name: Name for group B
-        text_column: Column index with text (0-indexed)
+        text_column_a: Column index with text for group A (0-indexed)
+        text_column_b: Column index with text for group B (0-indexed)
         min_frequency: Minimum word frequency
         min_score_threshold: Minimum normalized score threshold
         cluster_method: Clustering method
@@ -203,13 +207,17 @@ async def analyze_comparison(
         Comparison analysis results
     """
     try:
+        start_time = time.time()
+
         # Parse JSON strings
         mappings = json.loads(word_mappings)
         deletions = json.loads(delete_words)
 
         # Read texts from both files
-        texts_a = read_file_texts(file_a, text_column)
-        texts_b = read_file_texts(file_b, text_column)
+        t1 = time.time()
+        texts_a = read_file_texts(file_a, text_column_a)
+        texts_b = read_file_texts(file_b, text_column_b)
+        print(f"[TIMING] File reading: {time.time() - t1:.2f}s")
 
         if not texts_a:
             raise HTTPException(status_code=400, detail=f"No texts found in {group_a_name} file")
@@ -226,6 +234,7 @@ async def analyze_comparison(
         )
 
         # Run analysis
+        t2 = time.time()
         results = analyzer.analyze(
             texts_a=texts_a,
             texts_b=texts_b,
@@ -233,10 +242,13 @@ async def analyze_comparison(
             min_score_threshold=min_score_threshold,
             cluster_method=cluster_method
         )
+        print(f"[TIMING] Co-occurrence analysis: {time.time() - t2:.2f}s")
 
         # Add semantic edges if enabled
+        use_semantic_bool = use_semantic.lower() == "true"
         semantic_edges_added = 0
-        if use_semantic:
+        if use_semantic_bool:
+            t3 = time.time()
             semantic_analyzer = get_semantic_analyzer()
             # Add semantic edges to both group networks
             semantic_edges_added += analyzer.builder_a.add_semantic_edges(
@@ -245,14 +257,19 @@ async def analyze_comparison(
             semantic_edges_added += analyzer.builder_b.add_semantic_edges(
                 semantic_analyzer, threshold=semantic_threshold
             )
+            print(f"[TIMING] Semantic analysis: {time.time() - t3:.2f}s")
+
+        total_time = time.time() - start_time
+        print(f"[TIMING] Total: {total_time:.2f}s")
 
         return {
             "success": True,
             **results,
             "num_texts_a": len(texts_a),
             "num_texts_b": len(texts_b),
-            "semantic_enabled": use_semantic,
-            "semantic_edges_added": semantic_edges_added
+            "semantic_enabled": use_semantic_bool,
+            "semantic_edges_added": semantic_edges_added,
+            "processing_time": round(total_time, 2)
         }
 
     except Exception as e:

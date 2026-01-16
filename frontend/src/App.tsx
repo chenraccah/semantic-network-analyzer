@@ -17,13 +17,16 @@ import type {
 const DEFAULT_CONFIG: AnalysisConfig = {
   groupAName: 'Group A',
   groupBName: 'Group B',
-  textColumn: 1,
+  textColumnA: 1,
+  textColumnB: 1,
   minFrequency: 1,
   minScoreThreshold: 2.0,
   clusterMethod: 'louvain',
   wordMappings: {},
   deleteWords: [],
   unifyPlurals: true,
+  useSemantic: false,
+  semanticThreshold: 0.5,
 };
 
 const DEFAULT_FILTER_STATE: FilterState = {
@@ -52,6 +55,8 @@ function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [analysisStage, setAnalysisStage] = useState('');
   
   // UI state
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
@@ -67,6 +72,30 @@ function App() {
 
     setIsAnalyzing(true);
     setError(null);
+    setElapsedTime(0);
+    setAnalysisStage('Reading files...');
+
+    // Start timer
+    const startTime = Date.now();
+    const timerInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setElapsedTime(elapsed);
+
+      // Update stage based on elapsed time
+      if (elapsed < 2) {
+        setAnalysisStage('Reading files...');
+      } else if (elapsed < 5) {
+        setAnalysisStage('Processing text...');
+      } else if (elapsed < 15) {
+        setAnalysisStage('Building co-occurrence network...');
+      } else if (config.useSemantic && elapsed < 60) {
+        setAnalysisStage('Computing semantic similarities...');
+      } else if (elapsed < 120) {
+        setAnalysisStage('Calculating metrics...');
+      } else {
+        setAnalysisStage('Almost done...');
+      }
+    }, 1000);
 
     try {
       const result = await analyzeComparison(fileA, fileB, config);
@@ -76,7 +105,9 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
     } finally {
+      clearInterval(timerInterval);
       setIsAnalyzing(false);
+      setAnalysisStage('');
     }
   }, [fileA, fileB, config]);
 
@@ -190,7 +221,7 @@ function App() {
             />
 
             {/* Analyze Button */}
-            <div className="flex justify-center">
+            <div className="flex flex-col items-center gap-4">
               <button
                 onClick={handleAnalyze}
                 disabled={!fileA || !fileB || isAnalyzing}
@@ -202,6 +233,27 @@ function App() {
               >
                 {isAnalyzing ? '🔄 Analyzing...' : '🚀 Run Analysis'}
               </button>
+
+              {/* Progress Indicator */}
+              {isAnalyzing && (
+                <div className="w-full max-w-md bg-white rounded-lg shadow p-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-medium text-gray-700">{analysisStage}</span>
+                    <span className="text-sm text-gray-500">{elapsedTime}s</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-primary-500 h-2 rounded-full transition-all duration-500 animate-pulse"
+                      style={{ width: `${Math.min((elapsedTime / (config.useSemantic ? 60 : 30)) * 100, 95)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2 text-center">
+                    {config.useSemantic
+                      ? 'Semantic analysis may take up to 2 minutes for large files'
+                      : 'Analysis typically takes 10-30 seconds'}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Error Display */}

@@ -43,6 +43,8 @@ export interface NetworkEdge {
   from: string;
   to: string;
   weight: number;
+  semantic_similarity?: number;
+  edge_type?: 'semantic' | 'cooccurrence';
 }
 
 export interface WordPair {
@@ -76,6 +78,8 @@ export interface AnalysisResult {
   group_b_name: string;
   num_texts_a: number;
   num_texts_b: number;
+  semantic_enabled?: boolean;
+  semantic_edges_added?: number;
 }
 
 export interface WordPairResult {
@@ -104,13 +108,16 @@ export interface WordMapping {
 export interface AnalysisConfig {
   groupAName: string;
   groupBName: string;
-  textColumn: number;
+  textColumnA: number;
+  textColumnB: number;
   minFrequency: number;
   minScoreThreshold: number;
   clusterMethod: 'louvain' | 'spectral';
   wordMappings: Record<string, string>;
   deleteWords: string[];
   unifyPlurals: boolean;
+  useSemantic: boolean;
+  semanticThreshold: number;
 }
 
 // ============= UI State Types =============

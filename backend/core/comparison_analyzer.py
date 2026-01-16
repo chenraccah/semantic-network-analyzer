@@ -11,7 +11,13 @@ from .network_builder import NetworkBuilder
 
 class ComparisonAnalyzer:
     """Analyzes and compares semantic networks between two groups."""
-    
+
+    @staticmethod
+    def _normalize_key(name: str) -> str:
+        """Normalize group name for use as dictionary key."""
+        import re
+        return re.sub(r'\s+', '_', name.lower())
+
     def __init__(
         self,
         group_a_name: str = "Group A",
@@ -24,7 +30,7 @@ class ComparisonAnalyzer:
     ):
         """
         Initialize the comparison analyzer.
-        
+
         Args:
             group_a_name: Name for group A
             group_b_name: Name for group B
@@ -36,6 +42,8 @@ class ComparisonAnalyzer:
         """
         self.group_a_name = group_a_name
         self.group_b_name = group_b_name
+        self.group_a_key = self._normalize_key(group_a_name)
+        self.group_b_key = self._normalize_key(group_b_name)
         
         # Create shared processor for consistency
         self.processor = TextProcessor(
@@ -122,25 +130,25 @@ class ComparisonAnalyzer:
             
             self.comparison_data.append({
                 'word': word,
-                f'{self.group_a_name.lower()}_count': count_a,
-                f'{self.group_b_name.lower()}_count': count_b,
-                f'{self.group_a_name.lower()}_normalized': norm_a,
-                f'{self.group_b_name.lower()}_normalized': norm_b,
+                f'{self.group_a_key}_count': count_a,
+                f'{self.group_b_key}_count': count_b,
+                f'{self.group_a_key}_normalized': norm_a,
+                f'{self.group_b_key}_normalized': norm_b,
                 'difference': round(norm_a - norm_b, 2),
                 'avg_normalized': round((norm_a + norm_b) / 2, 2),
                 'in_both': count_a > 0 and count_b > 0,
-                f'{self.group_a_name.lower()}_cluster': clusters_a.get(word, -1),
-                f'{self.group_b_name.lower()}_cluster': clusters_b.get(word, -1),
-                f'{self.group_a_name.lower()}_degree': m_a.get('degree', 0),
-                f'{self.group_a_name.lower()}_strength': m_a.get('strength', 0),
-                f'{self.group_a_name.lower()}_betweenness': round(m_a.get('betweenness', 0), 3),
-                f'{self.group_a_name.lower()}_closeness': round(m_a.get('closeness', 0), 3),
-                f'{self.group_a_name.lower()}_eigenvector': round(m_a.get('eigenvector', 0), 3),
-                f'{self.group_b_name.lower()}_degree': m_b.get('degree', 0),
-                f'{self.group_b_name.lower()}_strength': m_b.get('strength', 0),
-                f'{self.group_b_name.lower()}_betweenness': round(m_b.get('betweenness', 0), 3),
-                f'{self.group_b_name.lower()}_closeness': round(m_b.get('closeness', 0), 3),
-                f'{self.group_b_name.lower()}_eigenvector': round(m_b.get('eigenvector', 0), 3),
+                f'{self.group_a_key}_cluster': clusters_a.get(word, -1),
+                f'{self.group_b_key}_cluster': clusters_b.get(word, -1),
+                f'{self.group_a_key}_degree': m_a.get('degree', 0),
+                f'{self.group_a_key}_strength': m_a.get('strength', 0),
+                f'{self.group_a_key}_betweenness': round(m_a.get('betweenness', 0), 3),
+                f'{self.group_a_key}_closeness': round(m_a.get('closeness', 0), 3),
+                f'{self.group_a_key}_eigenvector': round(m_a.get('eigenvector', 0), 3),
+                f'{self.group_b_key}_degree': m_b.get('degree', 0),
+                f'{self.group_b_key}_strength': m_b.get('strength', 0),
+                f'{self.group_b_key}_betweenness': round(m_b.get('betweenness', 0), 3),
+                f'{self.group_b_key}_closeness': round(m_b.get('closeness', 0), 3),
+                f'{self.group_b_key}_eigenvector': round(m_b.get('eigenvector', 0), 3),
             })
         
         # Sort by average normalized
@@ -170,11 +178,11 @@ class ComparisonAnalyzer:
             'stats': {
                 'total_words': len(self.comparison_data),
                 'words_in_both': len([d for d in self.comparison_data if d['in_both']]),
-                f'{self.group_a_name.lower()}_only': len([d for d in self.comparison_data if d[f'{self.group_a_name.lower()}_count'] > 0 and d[f'{self.group_b_name.lower()}_count'] == 0]),
-                f'{self.group_b_name.lower()}_only': len([d for d in self.comparison_data if d[f'{self.group_b_name.lower()}_count'] > 0 and d[f'{self.group_a_name.lower()}_count'] == 0]),
+                f'{self.group_a_key}_only': len([d for d in self.comparison_data if d[f'{self.group_a_key}_count'] > 0 and d[f'{self.group_b_key}_count'] == 0]),
+                f'{self.group_b_key}_only': len([d for d in self.comparison_data if d[f'{self.group_b_key}_count'] > 0 and d[f'{self.group_a_key}_count'] == 0]),
                 'total_edges': len(self.combined_edges),
-                f'{self.group_a_name.lower()}_clusters': len(set(clusters_a.values())),
-                f'{self.group_b_name.lower()}_clusters': len(set(clusters_b.values())),
+                f'{self.group_a_key}_clusters': len(set(clusters_a.values())),
+                f'{self.group_b_key}_clusters': len(set(clusters_b.values())),
             },
             'group_a_name': self.group_a_name,
             'group_b_name': self.group_b_name
@@ -224,8 +232,8 @@ class ComparisonAnalyzer:
             pairs_data.append({
                 'word_1': pair[0],
                 'word_2': pair[1],
-                f'{self.group_a_name.lower()}_connections': conn_a,
-                f'{self.group_b_name.lower()}_connections': conn_b,
+                f'{self.group_a_key}_connections': conn_a,
+                f'{self.group_b_key}_connections': conn_b,
                 'total_connections': total
             })
         
@@ -233,14 +241,14 @@ class ComparisonAnalyzer:
         pairs_data.sort(key=lambda x: x['total_connections'], reverse=True)
         
         # Normalize
-        max_a = max((p[f'{self.group_a_name.lower()}_connections'] for p in pairs_data), default=1)
-        max_b = max((p[f'{self.group_b_name.lower()}_connections'] for p in pairs_data), default=1)
+        max_a = max((p[f'{self.group_a_key}_connections'] for p in pairs_data), default=1)
+        max_b = max((p[f'{self.group_b_key}_connections'] for p in pairs_data), default=1)
         max_total = max((p['total_connections'] for p in pairs_data), default=1)
         
         for p in pairs_data:
-            p[f'{self.group_a_name.lower()}_normalized'] = round((p[f'{self.group_a_name.lower()}_connections'] / max_a) * 100, 2)
-            p[f'{self.group_b_name.lower()}_normalized'] = round((p[f'{self.group_b_name.lower()}_connections'] / max_b) * 100, 2)
+            p[f'{self.group_a_key}_normalized'] = round((p[f'{self.group_a_key}_connections'] / max_a) * 100, 2)
+            p[f'{self.group_b_key}_normalized'] = round((p[f'{self.group_b_key}_connections'] / max_b) * 100, 2)
             p['total_normalized'] = round((p['total_connections'] / max_total) * 100, 2)
-            p['difference'] = round(p[f'{self.group_a_name.lower()}_normalized'] - p[f'{self.group_b_name.lower()}_normalized'], 2)
+            p['difference'] = round(p[f'{self.group_a_key}_normalized'] - p[f'{self.group_b_key}_normalized'], 2)
         
         return pairs_data
