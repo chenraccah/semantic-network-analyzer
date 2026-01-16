@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     SIMILARITY_THRESHOLD: float = 0.5
     EMBEDDING_BATCH_SIZE: int = 32
 
+    # OpenAI Chat (cost-efficient settings)
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-3.5-turbo"  # Cheapest option
+    OPENAI_MAX_TOKENS: int = 500  # Limit response length
+    OPENAI_TEMPERATURE: float = 0.7
+
     # Timeouts
     REQUEST_TIMEOUT: int = 300  # 5 minutes
     

@@ -12,7 +12,7 @@ import os
 import json
 import time
 
-from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, MultiGroupAnalyzer, get_semantic_analyzer
+from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, MultiGroupAnalyzer, get_semantic_analyzer, get_chat_service
 from core.config import settings
 
 router = APIRouter()
@@ -497,6 +497,86 @@ async def preview_file(
         
         finally:
             os.unlink(tmp_path)
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ChatRequest(BaseModel):
+    """Chat request model."""
+    message: str
+    analysis_data: List[Dict[str, Any]]
+    stats: Dict[str, Any]
+    group_names: List[str]
+    group_keys: List[str]
+    conversation_history: Optional[List[Dict[str, str]]] = None
+
+
+@router.post("/chat")
+async def chat_about_analysis(request: ChatRequest):
+    """
+    Chat with GPT about the analysis results.
+
+    Uses GPT-3.5-turbo for cost efficiency.
+    Context is summarized to minimize tokens.
+
+    Args:
+        request: Chat request with message and analysis context
+
+    Returns:
+        GPT response and updated conversation history
+    """
+    try:
+        chat_service = get_chat_service()
+
+        if not chat_service.is_available():
+            return {
+                "success": False,
+                "error": "Chat service not configured. Set OPENAI_API_KEY environment variable.",
+                "response": None,
+                "history": request.conversation_history or []
+            }
+
+        # Prepare efficient context
+        context = chat_service.prepare_context(
+            analysis_data=request.analysis_data,
+            stats=request.stats,
+            group_names=request.group_names,
+            group_keys=request.group_keys,
+            max_words=30  # Limit for cost efficiency
+        )
+
+        # Get response
+        result = chat_service.chat(
+            message=request.message,
+            context=context,
+            conversation_history=request.conversation_history
+        )
+
+        if result.get("error"):
+            return {
+                "success": False,
+                "error": result["error"],
+                "response": None,
+                "history": result.get("history", [])
+            }
+
+        return {
+            "success": True,
+            "response": result["response"],
+            "history": result["history"],
+            "tokens_used": result.get("tokens_used", 0)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/chat/status")
+async def chat_status():
+    """Check if chat service is available."""
+    chat_service = get_chat_service()
+    return {
+        "available": chat_service.is_available(),
+        "model": settings.OPENAI_MODEL if chat_service.is_available() else None
+    }

@@ -8,6 +8,7 @@ from .network_builder import NetworkBuilder
 from .comparison_analyzer import ComparisonAnalyzer
 from .multi_group_analyzer import MultiGroupAnalyzer
 from .semantic_analyzer import SemanticAnalyzer, get_semantic_analyzer, preload_model
+from .chat_service import ChatService, get_chat_service
 
 __all__ = [
     'settings',
@@ -17,5 +18,7 @@ __all__ = [
     'MultiGroupAnalyzer',
     'SemanticAnalyzer',
     'get_semantic_analyzer',
-    'preload_model'
+    'preload_model',
+    'ChatService',
+    'get_chat_service'
 ]

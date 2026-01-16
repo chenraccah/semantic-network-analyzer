@@ -128,4 +128,53 @@ export async function healthCheck(): Promise<boolean> {
   }
 }
 
+/**
+ * Chat response type
+ */
+export interface ChatResponse {
+  success: boolean;
+  response: string | null;
+  error?: string;
+  history: Array<{ role: string; content: string }>;
+  tokens_used?: number;
+}
+
+/**
+ * Chat status response
+ */
+export interface ChatStatusResponse {
+  available: boolean;
+  model: string | null;
+}
+
+/**
+ * Check if chat service is available
+ */
+export async function checkChatStatus(): Promise<ChatStatusResponse> {
+  const response = await api.get<ChatStatusResponse>('/chat/status');
+  return response.data;
+}
+
+/**
+ * Send a chat message about the analysis
+ */
+export async function chatAboutAnalysis(
+  message: string,
+  analysisData: any[],
+  stats: any,
+  groupNames: string[],
+  groupKeys: string[],
+  conversationHistory: Array<{ role: string; content: string }> = []
+): Promise<ChatResponse> {
+  const response = await api.post<ChatResponse>('/chat', {
+    message,
+    analysis_data: analysisData,
+    stats,
+    group_names: groupNames,
+    group_keys: groupKeys,
+    conversation_history: conversationHistory
+  });
+  return response.data;
+}
+
 export default api;

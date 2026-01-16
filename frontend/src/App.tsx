@@ -4,6 +4,7 @@ import { ConfigPanel } from './components/ConfigPanel';
 import { NetworkGraph } from './components/NetworkGraph';
 import { DataTable } from './components/DataTable';
 import { ControlPanel } from './components/ControlPanel';
+import { ChatPanel } from './components/ChatPanel';
 import { analyzeMultiGroup } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
 import type {
@@ -404,6 +405,14 @@ function App() {
                 onSearch={(query) => handleFilterChange({ searchQuery: query })}
               />
             </div>
+
+            {/* Chat Panel - floating button that opens chat */}
+            <ChatPanel
+              analysisData={getAnalysisData()}
+              stats={analysisResult.stats}
+              groupNames={analysisResult.group_names}
+              groupKeys={analysisResult.group_keys}
+            />
           </div>
         )}
       </main>
