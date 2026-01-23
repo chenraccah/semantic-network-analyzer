@@ -6,12 +6,19 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session, AuthError, Provider } from '@supabase/supabase-js';
 import { supabase } from '../utils/supabase';
 
+interface UserMetadata {
+  full_name?: string;
+  organization?: string;
+  role?: string;
+  use_case?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUp: (email: string, password: string, metadata?: UserMetadata) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   signInWithOAuth: (provider: Provider) => Promise<{ error: AuthError | null }>;
 }
@@ -51,10 +58,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error };
   };
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (email: string, password: string, metadata?: UserMetadata) => {
     const { error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: metadata,
+      },
     });
     return { error };
   };
