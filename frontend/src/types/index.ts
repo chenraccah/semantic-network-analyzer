@@ -2,6 +2,15 @@
  * Type definitions for the Semantic Network Analyzer
  */
 
+// ============= Auth Types =============
+
+export interface User {
+  id: string;
+  email?: string;
+  user_metadata?: Record<string, any>;
+  created_at?: string;
+}
+
 // ============= API Types =============
 
 export interface WordNode {

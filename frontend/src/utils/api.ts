@@ -3,11 +3,12 @@
  */
 
 import axios from 'axios';
-import type { 
-  AnalysisResult, 
-  WordPairResult, 
+import { supabase } from './supabase';
+import type {
+  AnalysisResult,
+  WordPairResult,
   FilePreview,
-  AnalysisConfig 
+  AnalysisConfig
 } from '../types';
 
 const API_BASE_URL = '/api';
@@ -16,6 +17,29 @@ const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 300000, // 5 minutes for large files with semantic analysis
 });
+
+// Add auth interceptor to attach Bearer token
+api.interceptors.request.use(async (config) => {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (session?.access_token) {
+    config.headers.Authorization = `Bearer ${session.access_token}`;
+  }
+
+  return config;
+});
+
+// Handle 401 responses by redirecting to login
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      // Session expired or invalid - sign out
+      await supabase.auth.signOut();
+    }
+    return Promise.reject(error);
+  }
+);
 
 /**
  * Preview a file's contents

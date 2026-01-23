@@ -5,6 +5,8 @@ import { NetworkGraph } from './components/NetworkGraph';
 import { DataTable } from './components/DataTable';
 import { ControlPanel } from './components/ControlPanel';
 import { ChatPanel } from './components/ChatPanel';
+import { AuthForm } from './components/AuthForm';
+import { useAuth } from './contexts/AuthContext';
 import { analyzeMultiGroup } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
 import type {
@@ -46,6 +48,8 @@ const DEFAULT_VIZ_STATE: VisualizationState = {
 };
 
 function App() {
+  const { user, loading, signOut } = useAuth();
+
   // File state - array of files matching groups
   const [files, setFiles] = useState<(File | null)[]>([null]);
 
@@ -206,15 +210,40 @@ function App() {
     return analysisResult.stats.words_in_all ?? analysisResult.stats.words_in_both ?? 0;
   };
 
+  // Show loading state while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-gray-500">Loading...</div>
+      </div>
+    );
+  }
+
+  // Show auth form if not logged in
+  if (!user) {
+    return <AuthForm />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-gradient-to-r from-primary-500 to-purple-600 text-white py-6 px-4">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold">Semantic Network Analyzer</h1>
-          <p className="mt-2 text-primary-100">
-            Compare and visualize semantic patterns between groups
-          </p>
+        <div className="max-w-7xl mx-auto flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold">Semantic Network Analyzer</h1>
+            <p className="mt-2 text-primary-100">
+              Compare and visualize semantic patterns between groups
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-primary-100">{user.email}</span>
+            <button
+              onClick={signOut}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </header>
 

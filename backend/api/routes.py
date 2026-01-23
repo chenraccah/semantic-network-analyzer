@@ -2,7 +2,7 @@
 API routes for the semantic network analyzer.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -14,6 +14,7 @@ import time
 
 from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, MultiGroupAnalyzer, get_semantic_analyzer, get_chat_service
 from core.config import settings
+from core.auth import get_current_user, TokenData
 
 router = APIRouter()
 
@@ -93,7 +94,8 @@ async def analyze_single_group(
     word_mappings: str = Form("{}"),
     delete_words: str = Form("[]"),
     use_semantic: str = Form("false"),
-    semantic_threshold: float = Form(0.5)
+    semantic_threshold: float = Form(0.5),
+    current_user: TokenData = Depends(get_current_user)
 ):
     """
     Analyze a single group's text data.
@@ -183,7 +185,8 @@ async def analyze_comparison(
     word_mappings: str = Form("{}"),
     delete_words: str = Form("[]"),
     use_semantic: str = Form("false"),
-    semantic_threshold: float = Form(0.5)
+    semantic_threshold: float = Form(0.5),
+    current_user: TokenData = Depends(get_current_user)
 ):
     """
     Compare two groups' text data.
@@ -291,6 +294,7 @@ async def analyze_multi_group(
     file_2: UploadFile = File(None),
     file_3: UploadFile = File(None),
     file_4: UploadFile = File(None),
+    current_user: TokenData = Depends(get_current_user)
 ):
     """
     Analyze 1 to N groups of text data.
@@ -403,7 +407,8 @@ async def analyze_word_pairs(
     group_b_name: str = Form("Group B"),
     text_column: int = Form(1),
     word_mappings: str = Form("{}"),
-    delete_words: str = Form("[]")
+    delete_words: str = Form("[]"),
+    current_user: TokenData = Depends(get_current_user)
 ):
     """
     Get word pair co-occurrences for both groups.
@@ -443,7 +448,9 @@ async def analyze_word_pairs(
 
 
 @router.get("/stopwords")
-async def get_default_stopwords():
+async def get_default_stopwords(
+    current_user: TokenData = Depends(get_current_user)
+):
     """Get the default stopwords list."""
     return {
         "stopwords": list(TextProcessor.DEFAULT_STOPWORDS)
@@ -454,7 +461,8 @@ async def get_default_stopwords():
 async def preview_file(
     file: UploadFile = File(...),
     text_column: int = Form(1),
-    num_rows: int = Form(5)
+    num_rows: int = Form(5),
+    current_user: TokenData = Depends(get_current_user)
 ):
     """
     Preview uploaded file contents.
@@ -513,7 +521,10 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/chat")
-async def chat_about_analysis(request: ChatRequest):
+async def chat_about_analysis(
+    request: ChatRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
     """
     Chat with GPT about the analysis results.
 
@@ -573,7 +584,9 @@ async def chat_about_analysis(request: ChatRequest):
 
 
 @router.get("/chat/status")
-async def chat_status():
+async def chat_status(
+    current_user: TokenData = Depends(get_current_user)
+):
     """Check if chat service is available."""
     chat_service = get_chat_service()
     return {

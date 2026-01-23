@@ -9,6 +9,7 @@ from .comparison_analyzer import ComparisonAnalyzer
 from .multi_group_analyzer import MultiGroupAnalyzer
 from .semantic_analyzer import SemanticAnalyzer, get_semantic_analyzer, preload_model
 from .chat_service import ChatService, get_chat_service
+from .auth import get_current_user, get_optional_user, TokenData
 
 __all__ = [
     'settings',
@@ -20,5 +21,8 @@ __all__ = [
     'get_semantic_analyzer',
     'preload_model',
     'ChatService',
-    'get_chat_service'
+    'get_chat_service',
+    'get_current_user',
+    'get_optional_user',
+    'TokenData'
 ]

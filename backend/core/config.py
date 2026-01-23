@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 500  # Limit response length
     OPENAI_TEMPERATURE: float = 0.7
 
+    # Supabase Authentication
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""
+
     # Timeouts
     REQUEST_TIMEOUT: int = 300  # 5 minutes
     
