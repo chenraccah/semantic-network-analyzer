@@ -23,6 +23,7 @@ interface SubscriptionContextType {
   canChat: () => boolean;
   canExport: () => boolean;
   canUseSemantic: () => boolean;
+  canSaveAnalyses: () => boolean;
   getMaxGroups: () => number;
   // Refresh
   refreshProfile: () => Promise<void>;
@@ -156,6 +157,10 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     return limits?.semantic_enabled ?? false;
   }, [limits]);
 
+  const canSaveAnalyses = useCallback((): boolean => {
+    return (limits?.save_analyses_days ?? 0) > 0;
+  }, [limits]);
+
   const getMaxGroups = useCallback((): number => {
     return limits?.max_groups ?? 1;
   }, [limits]);
@@ -185,6 +190,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     canChat,
     canExport,
     canUseSemantic,
+    canSaveAnalyses,
     getMaxGroups,
     refreshProfile,
     showUpgradeModal,

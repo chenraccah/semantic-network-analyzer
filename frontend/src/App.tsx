@@ -12,7 +12,7 @@ import { BillingPage } from './components/BillingPage';
 import { AnalysisHistory, SaveAnalysisDialog } from './components/AnalysisHistory';
 import { useAuth } from './contexts/AuthContext';
 import { useSubscription } from './contexts/SubscriptionContext';
-import { analyzeMultiGroup, saveAnalysis, checkSaveAccess } from './utils/api';
+import { analyzeMultiGroup, saveAnalysis } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
 import type {
   AnalysisResult,
@@ -59,6 +59,7 @@ function App() {
     closeUpgradeModal,
     getMaxGroups,
     canExport,
+    canSaveAnalyses,
     openUpgradeModal,
     refreshProfile
   } = useSubscription();
@@ -258,22 +259,16 @@ function App() {
   }, [analysisResult, filterState.hiddenWords, canExport, openUpgradeModal]);
 
   // Handle save analysis
-  const handleSaveClick = useCallback(async () => {
+  const handleSaveClick = useCallback(() => {
     if (!analysisResult) return;
 
-    // Check if user can save
-    try {
-      const saveCheck = await checkSaveAccess();
-      if (!saveCheck.allowed) {
-        openUpgradeModal(saveCheck.message || 'Saving analyses is a Pro feature.');
-        return;
-      }
-      setShowSaveDialog(true);
-    } catch (err) {
-      console.error('Error checking save access:', err);
-      openUpgradeModal('Saving analyses is a Pro feature.');
+    // Check if user can save (client-side check for instant feedback)
+    if (!canSaveAnalyses()) {
+      openUpgradeModal('Saving analyses is a Pro feature. Upgrade to save your work.');
+      return;
     }
-  }, [analysisResult, openUpgradeModal]);
+    setShowSaveDialog(true);
+  }, [analysisResult, canSaveAnalyses, openUpgradeModal]);
 
   const handleSaveAnalysis = useCallback(async (name: string) => {
     if (!analysisResult) return;
@@ -352,7 +347,13 @@ function App() {
             <UsageBanner />
             <span className="text-sm text-primary-100">{user.email}</span>
             <button
-              onClick={() => setShowHistory(true)}
+              onClick={() => {
+                if (canSaveAnalyses()) {
+                  setShowHistory(true);
+                } else {
+                  openUpgradeModal('Saving and viewing analysis history is a Pro feature. Upgrade to save your analyses.');
+                }
+              }}
               className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
             >
               History
