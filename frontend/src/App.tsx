@@ -61,7 +61,8 @@ function App() {
     canExport,
     canSaveAnalyses,
     openUpgradeModal,
-    refreshProfile
+    refreshProfile,
+    loading: subscriptionLoading
   } = useSubscription();
 
   // File state - array of files matching groups
@@ -348,13 +349,18 @@ function App() {
             <span className="text-sm text-primary-100">{user.email}</span>
             <button
               onClick={() => {
+                // Wait for subscription to load before checking
+                if (subscriptionLoading) {
+                  return;
+                }
                 if (canSaveAnalyses()) {
                   setShowHistory(true);
                 } else {
                   openUpgradeModal('Saving and viewing analysis history is a Pro feature. Upgrade to save your analyses.');
                 }
               }}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+              disabled={subscriptionLoading}
+              className={`px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors ${subscriptionLoading ? 'opacity-50' : ''}`}
             >
               History
             </button>

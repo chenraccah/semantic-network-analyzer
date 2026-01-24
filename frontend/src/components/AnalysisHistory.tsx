@@ -9,7 +9,6 @@ import {
   getSavedAnalyses,
   getSavedAnalysis,
   deleteSavedAnalysis,
-  checkSaveAccess,
   type SavedAnalysisSummary
 } from '../utils/api';
 
@@ -19,44 +18,41 @@ interface AnalysisHistoryProps {
 }
 
 export function AnalysisHistory({ onLoad, onClose }: AnalysisHistoryProps) {
-  const { tier, openUpgradeModal } = useSubscription();
+  const { tier, canSaveAnalyses, openUpgradeModal } = useSubscription();
 
   const [analyses, setAnalyses] = useState<SavedAnalysisSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [canSave, setCanSave] = useState(false);
+
+  // Use the subscription context to check if user can save
+  const canSave = canSaveAnalyses();
 
   // Fetch saved analyses on mount
   useEffect(() => {
     const fetchData = async () => {
+      if (!canSave) {
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
 
-        // Check if user can save
-        const saveCheck = await checkSaveAccess();
-        setCanSave(saveCheck.allowed);
-
-        if (saveCheck.allowed) {
-          const result = await getSavedAnalyses();
-          setAnalyses(result.analyses);
-        }
+        const result = await getSavedAnalyses();
+        setAnalyses(result.analyses);
       } catch (err: any) {
         console.error('Error fetching analyses:', err);
-        if (err.response?.status === 403) {
-          setCanSave(false);
-        } else {
-          setError('Failed to load saved analyses');
-        }
+        setError('Failed to load saved analyses');
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
-  }, []);
+  }, [canSave]);
 
   const handleLoad = async (id: string) => {
     try {
