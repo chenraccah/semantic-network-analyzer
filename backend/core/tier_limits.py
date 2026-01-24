@@ -20,7 +20,7 @@ TIER_LIMITS: Dict[str, Dict[str, Any]] = {
     "pro": {
         "max_groups": 2,
         "max_analyses_per_day": None,  # Unlimited
-        "max_words": 500,
+        "max_words": 50000,
         "max_file_size_mb": 25,
         "semantic_enabled": True,
         "chat_enabled": True,

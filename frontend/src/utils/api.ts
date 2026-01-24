@@ -24,18 +24,30 @@ api.interceptors.request.use(async (config) => {
 
   if (session?.access_token) {
     config.headers.Authorization = `Bearer ${session.access_token}`;
+    console.log('[API] Request with token:', config.url, 'token starts with:', session.access_token.substring(0, 20));
+  } else {
+    console.log('[API] Request WITHOUT token:', config.url);
   }
 
   return config;
 });
 
-// Handle 401 responses by redirecting to login
+// Handle 401 responses - don't auto-signout for profile endpoints (they're called early)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      // Session expired or invalid - sign out
-      await supabase.auth.signOut();
+      const url = error.config?.url || '';
+      // Don't sign out for profile/limits endpoints - these might fail during auth transition
+      if (url.includes('/user/profile') || url.includes('/user/limits')) {
+        // Just reject, don't sign out
+        return Promise.reject(error);
+      }
+      // For other endpoints, sign out if session exists
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await supabase.auth.signOut();
+      }
     }
     return Promise.reject(error);
   }

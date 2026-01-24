@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # Timeouts
     REQUEST_TIMEOUT: int = 300  # 5 minutes

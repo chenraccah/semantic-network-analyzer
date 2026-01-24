@@ -4,10 +4,10 @@ Supabase client for user profiles and usage tracking.
 
 from typing import Optional, Dict, Any
 from datetime import date, datetime
-import os
 
 from supabase import create_client, Client
 
+from .config import settings
 from .tier_limits import get_tier_limits, check_limit, is_feature_enabled
 
 # Initialize Supabase client
@@ -19,9 +19,9 @@ def get_supabase_client() -> Optional[Client]:
     global _supabase_client
 
     if _supabase_client is None:
-        url = os.getenv("SUPABASE_URL", "")
+        url = settings.SUPABASE_URL or ""
         # Use service role key for backend operations (can bypass RLS)
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
+        key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY or ""
 
         if url and key:
             _supabase_client = create_client(url, key)

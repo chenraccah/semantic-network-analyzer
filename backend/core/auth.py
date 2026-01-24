@@ -11,6 +11,19 @@ from pydantic import BaseModel
 from .config import settings
 
 
+# Supabase JWK public key for ES256 verification
+SUPABASE_JWK = {
+    "x": "LNDJ9LLq36Ylf6MD8Gkp9Q4fVvd1nffRXVqtzA9vqug",
+    "y": "MAfC416KdYe2igkObyK6fGb7KrvKAlUP9ItR_lm-xNg",
+    "alg": "ES256",
+    "crv": "P-256",
+    "ext": True,
+    "kid": "e676781b-6292-4d60-bf1a-ac4d818a3699",
+    "kty": "EC",
+    "key_ops": ["verify"]
+}
+
+
 # Security scheme for Bearer token
 security = HTTPBearer(auto_error=False)
 
@@ -41,11 +54,11 @@ def verify_jwt(token: str) -> TokenData:
         )
 
     try:
-        # Decode the JWT using the Supabase JWT secret
+        # Use Supabase JWK public key for ES256 verification
         payload = jwt.decode(
             token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
+            SUPABASE_JWK,
+            algorithms=["ES256"],
             audience="authenticated"
         )
 

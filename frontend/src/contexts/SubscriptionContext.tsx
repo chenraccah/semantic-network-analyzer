@@ -49,7 +49,7 @@ const defaultLimits: TierLimits = {
 const SubscriptionContext = createContext<SubscriptionContextType | undefined>(undefined);
 
 export function SubscriptionProvider({ children }: { children: React.ReactNode }) {
-  const { user, session } = useAuth();
+  const { user, session, loading: authLoading } = useAuth();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [allTierLimits, setAllTierLimits] = useState<AllTierLimits | null>(null);
@@ -62,6 +62,11 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
   // Fetch user profile
   const refreshProfile = useCallback(async () => {
+    // Wait for auth to finish loading
+    if (authLoading) {
+      return;
+    }
+
     if (!user || !session) {
       setProfile(null);
       setLoading(false);
@@ -90,11 +95,11 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     } finally {
       setLoading(false);
     }
-  }, [user, session]);
+  }, [user, session, authLoading]);
 
   // Fetch all tier limits for upgrade modal
   const fetchAllLimits = useCallback(async () => {
-    if (!session) return;
+    if (authLoading || !session) return;
 
     try {
       const response = await api.get<AllTierLimits>('/user/limits');
@@ -102,13 +107,22 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     } catch (err) {
       console.error('Failed to fetch tier limits:', err);
     }
-  }, [session]);
+  }, [session, authLoading]);
 
-  // Fetch profile on auth change
+  // Fetch profile on auth change (only when auth is done loading)
+  // TEMPORARILY DISABLED FOR DEBUGGING
   useEffect(() => {
-    refreshProfile();
-    fetchAllLimits();
-  }, [refreshProfile, fetchAllLimits]);
+    if (!authLoading && user && session) {
+      // Add a delay to ensure session is fully established
+      const timer = setTimeout(() => {
+        refreshProfile();
+        fetchAllLimits();
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (!authLoading && !user) {
+      setLoading(false);
+    }
+  }, [user, session, authLoading]); // removed callback deps to prevent loops
 
   // Derived values
   const tier = profile?.tier || 'free';
