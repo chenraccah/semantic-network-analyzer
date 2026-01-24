@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Send, X, Loader2, AlertCircle } from 'lucide-react';
+import { MessageCircle, Send, X, Loader2, AlertCircle, Crown } from 'lucide-react';
 import { chatAboutAnalysis, checkChatStatus } from '../utils/api';
+import { useSubscription } from '../contexts/SubscriptionContext';
 import type { ComparisonNode, NetworkStats } from '../types';
 
 interface ChatMessage {
@@ -21,6 +22,7 @@ export function ChatPanel({
   groupNames,
   groupKeys,
 }: ChatPanelProps) {
+  const { canChat, chatStatus, openUpgradeModal, limits, refreshProfile } = useSubscription();
   const [isOpen, setIsOpen] = useState(false);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -28,12 +30,21 @@ export function ChatPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tokensUsed, setTokensUsed] = useState(0);
+  const [chatRemaining, setChatRemaining] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const chatEnabled = limits?.chat_enabled ?? false;
+  const chatAllowed = canChat();
 
   // Check if chat service is available on mount
   useEffect(() => {
     checkChatStatus()
-      .then((status) => setIsAvailable(status.available))
+      .then((status) => {
+        setIsAvailable(status.available);
+        if (status.chat_limit?.remaining !== undefined) {
+          setChatRemaining(status.chat_limit.remaining);
+        }
+      })
       .catch(() => setIsAvailable(false));
   }, []);
 
@@ -44,6 +55,12 @@ export function ChatPanel({
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+
+    // Check if chat is allowed before sending
+    if (!chatAllowed) {
+      openUpgradeModal(chatStatus?.message || 'Upgrade to use GPT chat');
+      return;
+    }
 
     const userMessage = input.trim();
     setInput('');
@@ -69,6 +86,18 @@ export function ChatPanel({
           { role: 'assistant', content: response.response! },
         ]);
         setTokensUsed((prev) => prev + (response.tokens_used || 0));
+
+        // Update remaining chat count
+        if (response.chat_remaining !== undefined) {
+          setChatRemaining(response.chat_remaining);
+        }
+
+        // Refresh profile to update usage
+        await refreshProfile();
+      } else if (response.limit_exceeded) {
+        // Chat limit exceeded
+        openUpgradeModal(response.error || 'Chat limit reached. Upgrade for more messages.');
+        setError(response.error || 'Chat limit reached');
       } else {
         setError(response.error || 'Failed to get response');
       }
@@ -121,8 +150,13 @@ export function ChatPanel({
           <span className="font-medium">Chat about Analysis</span>
         </div>
         <div className="flex items-center gap-2">
-          {tokensUsed > 0 && (
+          {chatRemaining !== null && limits?.chat_messages_per_month !== null && (
             <span className="text-xs bg-primary-600 px-2 py-1 rounded">
+              {chatRemaining} left
+            </span>
+          )}
+          {tokensUsed > 0 && (
+            <span className="text-xs bg-primary-600/50 px-2 py-1 rounded">
               {tokensUsed} tokens
             </span>
           )}
@@ -136,7 +170,28 @@ export function ChatPanel({
       </div>
 
       {/* Content */}
-      {isAvailable === false ? (
+      {!chatEnabled ? (
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-r from-primary-100 to-purple-100 rounded-full flex items-center justify-center">
+              <Crown className="w-8 h-8 text-primary-500" />
+            </div>
+            <p className="font-medium text-gray-900">GPT Chat is a Pro Feature</p>
+            <p className="text-sm text-gray-500 mt-2 mb-4">
+              Discuss your analysis results with AI to gain deeper insights.
+            </p>
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                openUpgradeModal('Upgrade to Pro to chat about your analysis with GPT');
+              }}
+              className="px-4 py-2 bg-primary-500 text-white rounded-lg font-medium hover:bg-primary-600 transition-colors"
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        </div>
+      ) : isAvailable === false ? (
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="text-center text-gray-500">
             <AlertCircle className="w-12 h-12 mx-auto mb-3 text-yellow-500" />

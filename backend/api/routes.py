@@ -15,6 +15,18 @@ import time
 from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, MultiGroupAnalyzer, get_semantic_analyzer, get_chat_service
 from core.config import settings
 from core.auth import get_current_user, TokenData
+from core.tier_limits import get_tier_limits, TIER_LIMITS, TIER_PRICING
+from core.supabase_client import (
+    get_user_profile,
+    increment_analysis_count,
+    increment_chat_count,
+    check_analysis_limit,
+    check_chat_limit,
+    check_groups_limit,
+    check_semantic_enabled,
+    check_export_enabled,
+    log_usage
+)
 
 router = APIRouter()
 
@@ -320,6 +332,66 @@ async def analyze_multi_group(
         configs = json.loads(group_configs)
         mappings = json.loads(word_mappings)
         deletions = json.loads(delete_words)
+        use_semantic_bool = use_semantic.lower() == "true"
+
+        # ============================================================
+        # USAGE LIMIT CHECKS
+        # ============================================================
+
+        # Check daily analysis limit
+        analysis_limit = await check_analysis_limit(current_user.user_id)
+        if not analysis_limit.get("allowed"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "limit_exceeded",
+                    "type": "analysis_limit",
+                    "message": analysis_limit.get("message"),
+                    "tier": analysis_limit.get("tier"),
+                    "limit": analysis_limit.get("limit"),
+                    "used": analysis_limit.get("used")
+                }
+            )
+
+        # Check groups limit
+        num_groups = len(configs)
+        groups_limit = await check_groups_limit(current_user.user_id, num_groups)
+        if not groups_limit.get("allowed"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "limit_exceeded",
+                    "type": "groups_limit",
+                    "message": groups_limit.get("message"),
+                    "tier": groups_limit.get("tier"),
+                    "max_groups": groups_limit.get("max_groups"),
+                    "requested_groups": num_groups
+                }
+            )
+
+        # Check semantic feature access
+        if use_semantic_bool:
+            semantic_check = await check_semantic_enabled(current_user.user_id)
+            if not semantic_check.get("allowed"):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "feature_disabled",
+                        "type": "semantic_disabled",
+                        "message": semantic_check.get("message"),
+                        "tier": semantic_check.get("tier")
+                    }
+                )
+
+        # Get tier limits for word count check
+        tier = analysis_limit.get("tier", "free")
+        limits = get_tier_limits(tier)
+        max_words = limits.get("max_words")
+        max_file_size = limits.get("max_file_size_mb", 50) * 1024 * 1024  # Convert to bytes
+
+        # ============================================================
+        # END LIMIT CHECKS
+        # ============================================================
 
         # Collect files in order
         all_files = [file_0, file_1, file_2, file_3, file_4]
@@ -334,10 +406,32 @@ async def analyze_multi_group(
         if len(files) == 0:
             raise HTTPException(status_code=400, detail="At least one file is required")
 
+        # Check file sizes against tier limit
+        for i, file in enumerate(files):
+            # Read file to check size
+            content = await file.read()
+            file_size = len(content)
+            await file.seek(0)  # Reset file position
+
+            if file_size > max_file_size:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "limit_exceeded",
+                        "type": "file_size",
+                        "message": f"File {i+1} exceeds size limit ({limits.get('max_file_size_mb')} MB). Upgrade for larger files.",
+                        "tier": tier,
+                        "max_size_mb": limits.get("max_file_size_mb"),
+                        "file_size_mb": round(file_size / (1024 * 1024), 2)
+                    }
+                )
+
         # Read texts from all files
         t1 = time.time()
         texts_list = []
         group_names = []
+        total_words = 0
+
         for i, (file, config) in enumerate(zip(files, configs)):
             text_column = config.get('text_column', 1)
             texts = read_file_texts(file, text_column)
@@ -348,7 +442,26 @@ async def analyze_multi_group(
                 )
             texts_list.append(texts)
             group_names.append(config.get('name', f'Group {i+1}'))
+
+            # Count words for limit checking
+            for text in texts:
+                total_words += len(str(text).split())
+
         print(f"[TIMING] File reading: {time.time() - t1:.2f}s")
+
+        # Check word count limit
+        if max_words is not None and total_words > max_words:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "limit_exceeded",
+                    "type": "word_limit",
+                    "message": f"Total words ({total_words}) exceeds limit ({max_words}). Upgrade for higher limits.",
+                    "tier": tier,
+                    "max_words": max_words,
+                    "total_words": total_words
+                }
+            )
 
         # Create multi-group analyzer
         analyzer = MultiGroupAnalyzer(
@@ -386,6 +499,17 @@ async def analyze_multi_group(
         # Build response with text counts
         num_texts = {f"num_texts_{analyzer.group_keys[i]}": len(texts_list[i]) for i in range(len(texts_list))}
 
+        # Increment usage counter after successful analysis
+        await increment_analysis_count(current_user.user_id)
+
+        # Log usage for analytics
+        await log_usage(current_user.user_id, "analysis", {
+            "num_groups": len(group_names),
+            "total_words": total_words,
+            "semantic_enabled": use_semantic_bool,
+            "processing_time": round(total_time, 2)
+        })
+
         return {
             "success": True,
             **results,
@@ -395,6 +519,9 @@ async def analyze_multi_group(
             "processing_time": round(total_time, 2)
         }
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (including limit errors)
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -538,6 +665,19 @@ async def chat_about_analysis(
         GPT response and updated conversation history
     """
     try:
+        # Check chat limit before processing
+        chat_limit = await check_chat_limit(current_user.user_id)
+        if not chat_limit.get("allowed"):
+            return {
+                "success": False,
+                "error": chat_limit.get("message"),
+                "response": None,
+                "history": request.conversation_history or [],
+                "limit_exceeded": True,
+                "tier": chat_limit.get("tier"),
+                "chat_limit": chat_limit
+            }
+
         chat_service = get_chat_service()
 
         if not chat_service.is_available():
@@ -572,11 +712,23 @@ async def chat_about_analysis(
                 "history": result.get("history", [])
             }
 
+        # Increment chat count after successful response
+        await increment_chat_count(current_user.user_id)
+
+        # Log usage
+        await log_usage(current_user.user_id, "chat", {
+            "tokens_used": result.get("tokens_used", 0)
+        })
+
+        # Get updated chat status for response
+        updated_chat_limit = await check_chat_limit(current_user.user_id)
+
         return {
             "success": True,
             "response": result["response"],
             "history": result["history"],
-            "tokens_used": result.get("tokens_used", 0)
+            "tokens_used": result.get("tokens_used", 0),
+            "chat_remaining": updated_chat_limit.get("remaining")
         }
 
     except Exception as e:
@@ -589,7 +741,116 @@ async def chat_status(
 ):
     """Check if chat service is available."""
     chat_service = get_chat_service()
+
+    # Also check user's chat limit
+    chat_limit = await check_chat_limit(current_user.user_id)
+
     return {
-        "available": chat_service.is_available(),
-        "model": settings.OPENAI_MODEL if chat_service.is_available() else None
+        "available": chat_service.is_available() and chat_limit.get("allowed", True),
+        "model": settings.OPENAI_MODEL if chat_service.is_available() else None,
+        "tier": chat_limit.get("tier", "free"),
+        "chat_limit": chat_limit
     }
+
+
+# ============================================================
+# User Profile and Subscription Endpoints
+# ============================================================
+
+@router.get("/user/profile")
+async def get_profile(
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Get user profile with tier info, usage stats, and limits.
+    """
+    profile = await get_user_profile(current_user.user_id)
+    tier = profile.get("tier", "free")
+    limits = get_tier_limits(tier)
+
+    # Get current usage status
+    analysis_status = await check_analysis_limit(current_user.user_id)
+    chat_status = await check_chat_limit(current_user.user_id)
+
+    return {
+        "id": current_user.user_id,
+        "email": current_user.email,
+        "tier": tier,
+        "limits": limits,
+        "usage": {
+            "analyses_today": profile.get("analyses_today", 0),
+            "chat_messages_month": profile.get("chat_messages_month", 0),
+        },
+        "analysis_status": analysis_status,
+        "chat_status": chat_status,
+        "stripe_customer_id": profile.get("stripe_customer_id"),
+        "stripe_subscription_id": profile.get("stripe_subscription_id"),
+    }
+
+
+@router.get("/user/limits")
+async def get_limits(
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Get all tier limits for display in UI.
+    """
+    return {
+        "tiers": TIER_LIMITS,
+        "pricing": TIER_PRICING
+    }
+
+
+@router.get("/user/check-analysis")
+async def check_analysis(
+    groups: int = 1,
+    use_semantic: bool = False,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Pre-check if an analysis would be allowed before running it.
+    """
+    # Check daily limit
+    analysis_limit = await check_analysis_limit(current_user.user_id)
+    if not analysis_limit.get("allowed"):
+        return {
+            "allowed": False,
+            "reason": "analysis_limit",
+            **analysis_limit
+        }
+
+    # Check groups limit
+    groups_limit = await check_groups_limit(current_user.user_id, groups)
+    if not groups_limit.get("allowed"):
+        return {
+            "allowed": False,
+            "reason": "groups_limit",
+            **groups_limit
+        }
+
+    # Check semantic access
+    if use_semantic:
+        semantic_check = await check_semantic_enabled(current_user.user_id)
+        if not semantic_check.get("allowed"):
+            return {
+                "allowed": False,
+                "reason": "semantic_disabled",
+                **semantic_check
+            }
+
+    return {
+        "allowed": True,
+        "tier": analysis_limit.get("tier", "free"),
+        "remaining_analyses": analysis_limit.get("remaining"),
+        "max_groups": groups_limit.get("max_groups")
+    }
+
+
+@router.get("/user/check-export")
+async def check_export(
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Check if user can export data.
+    """
+    return await check_export_enabled(current_user.user_id)

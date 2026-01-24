@@ -31,3 +31,6 @@ pydantic>=2.5.3
 
 # Authentication
 python-jose[cryptography]>=3.3.0
+
+# Supabase
+supabase>=2.0.0

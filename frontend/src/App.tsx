@@ -6,7 +6,10 @@ import { DataTable } from './components/DataTable';
 import { ControlPanel } from './components/ControlPanel';
 import { ChatPanel } from './components/ChatPanel';
 import { AuthForm } from './components/AuthForm';
+import { UsageBanner } from './components/UsageBanner';
+import { UpgradeModal } from './components/UpgradeModal';
 import { useAuth } from './contexts/AuthContext';
+import { useSubscription } from './contexts/SubscriptionContext';
 import { analyzeMultiGroup } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
 import type {
@@ -31,7 +34,7 @@ const DEFAULT_CONFIG: AnalysisConfig = {
   semanticThreshold: 0.5,
 };
 
-const MAX_GROUPS = 5;
+const MAX_GROUPS_ABSOLUTE = 5; // Maximum groups allowed by the system
 
 const DEFAULT_FILTER_STATE: FilterState = {
   filterType: 'all',
@@ -49,6 +52,14 @@ const DEFAULT_VIZ_STATE: VisualizationState = {
 
 function App() {
   const { user, loading, signOut } = useAuth();
+  const {
+    showUpgradeModal,
+    closeUpgradeModal,
+    getMaxGroups,
+    canExport,
+    openUpgradeModal,
+    refreshProfile
+  } = useSubscription();
 
   // File state - array of files matching groups
   const [files, setFiles] = useState<(File | null)[]>([null]);
@@ -68,16 +79,22 @@ function App() {
   const [vizState, setVizState] = useState<VisualizationState>(DEFAULT_VIZ_STATE);
   const [activeTab, setActiveTab] = useState<'upload' | 'analysis'>('upload');
 
+  // Get the effective max groups based on subscription
+  const effectiveMaxGroups = Math.min(getMaxGroups(), MAX_GROUPS_ABSOLUTE);
+
   // Add a new group
   const handleAddGroup = useCallback(() => {
-    if (config.groups.length >= MAX_GROUPS) return;
+    if (config.groups.length >= effectiveMaxGroups) {
+      openUpgradeModal(`Your plan allows up to ${effectiveMaxGroups} group(s). Upgrade to analyze more groups.`);
+      return;
+    }
     const newGroupNum = config.groups.length + 1;
     setConfig(prev => ({
       ...prev,
       groups: [...prev.groups, { name: `Group ${newGroupNum}`, textColumn: 1 }]
     }));
     setFiles(prev => [...prev, null]);
-  }, [config.groups.length]);
+  }, [config.groups.length, effectiveMaxGroups, openUpgradeModal]);
 
   // Remove a group
   const handleRemoveGroup = useCallback((index: number) => {
@@ -147,8 +164,21 @@ function App() {
       setAnalysisResult(result);
       setActiveTab('analysis');
       setFilterState(DEFAULT_FILTER_STATE);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed');
+      // Refresh profile to update usage counts
+      await refreshProfile();
+    } catch (err: any) {
+      // Handle limit exceeded errors
+      if (err.response?.status === 403 && err.response?.data?.detail?.error === 'limit_exceeded') {
+        const detail = err.response.data.detail;
+        openUpgradeModal(detail.message || 'Limit exceeded. Upgrade for higher limits.');
+        setError(detail.message || 'Limit exceeded');
+      } else if (err.response?.status === 403 && err.response?.data?.detail?.error === 'feature_disabled') {
+        const detail = err.response.data.detail;
+        openUpgradeModal(detail.message || 'This feature requires an upgrade.');
+        setError(detail.message || 'Feature not available');
+      } else {
+        setError(err instanceof Error ? err.message : 'Analysis failed');
+      }
     } finally {
       clearInterval(timerInterval);
       setIsAnalyzing(false);
@@ -187,6 +217,12 @@ function App() {
   const handleExport = useCallback(() => {
     if (!analysisResult) return;
 
+    // Check if user can export
+    if (!canExport()) {
+      openUpgradeModal('CSV export is a Pro feature. Upgrade to export your analysis data.');
+      return;
+    }
+
     const data = analysisResult.analysis_data || analysisResult.comparison_data || [];
     const csv = exportToCSV(
       data,
@@ -196,7 +232,7 @@ function App() {
     );
 
     downloadCSV(csv, 'semantic_network_analysis.csv');
-  }, [analysisResult, filterState.hiddenWords]);
+  }, [analysisResult, filterState.hiddenWords, canExport, openUpgradeModal]);
 
   // Get analysis data (handle both legacy and new format)
   const getAnalysisData = () => {
@@ -236,6 +272,7 @@ function App() {
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <UsageBanner />
             <span className="text-sm text-primary-100">{user.email}</span>
             <button
               onClick={signOut}
@@ -281,15 +318,31 @@ function App() {
             {/* File Upload Section */}
             <div className="bg-white rounded-lg shadow p-6">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold">📂 Upload Files</h2>
-                {config.groups.length < MAX_GROUPS && (
-                  <button
-                    onClick={handleAddGroup}
-                    className="px-4 py-2 bg-primary-500 text-white rounded hover:bg-primary-600 text-sm"
-                  >
-                    + Add Group
-                  </button>
-                )}
+                <div>
+                  <h2 className="text-xl font-semibold">Upload Files</h2>
+                  <p className="text-sm text-gray-500">
+                    {config.groups.length}/{effectiveMaxGroups} groups
+                    {effectiveMaxGroups < MAX_GROUPS_ABSOLUTE && (
+                      <button
+                        onClick={() => openUpgradeModal('Upgrade to analyze more groups')}
+                        className="ml-2 text-primary-500 hover:text-primary-600"
+                      >
+                        (upgrade for more)
+                      </button>
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={handleAddGroup}
+                  disabled={config.groups.length >= MAX_GROUPS_ABSOLUTE}
+                  className={`px-4 py-2 rounded text-sm ${
+                    config.groups.length >= effectiveMaxGroups
+                      ? 'bg-gray-300 text-gray-500'
+                      : 'bg-primary-500 text-white hover:bg-primary-600'
+                  }`}
+                >
+                  + Add Group
+                </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {config.groups.map((group, index) => (
@@ -445,6 +498,11 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* Upgrade Modal */}
+      {showUpgradeModal && (
+        <UpgradeModal onClose={closeUpgradeModal} />
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Settings, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Settings, Plus, Trash2, ChevronDown, ChevronUp, Crown } from 'lucide-react';
 import type { AnalysisConfig, GroupConfig } from '../types';
+import { useSubscription } from '../contexts/SubscriptionContext';
 
 interface ConfigPanelProps {
   config: AnalysisConfig;
@@ -9,10 +10,13 @@ interface ConfigPanelProps {
 }
 
 export function ConfigPanel({ config, onChange, onGroupConfigChange }: ConfigPanelProps) {
+  const { canUseSemantic, openUpgradeModal, tier } = useSubscription();
   const [isExpanded, setIsExpanded] = useState(false);
   const [newMappingSource, setNewMappingSource] = useState('');
   const [newMappingTarget, setNewMappingTarget] = useState('');
   const [newDeleteWord, setNewDeleteWord] = useState('');
+
+  const semanticEnabled = canUseSemantic();
 
   const handleChange = (key: keyof AnalysisConfig, value: any) => {
     onChange({ ...config, [key]: value });
@@ -221,42 +225,69 @@ export function ConfigPanel({ config, onChange, onGroupConfigChange }: ConfigPan
 
           {/* Semantic Analysis */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Semantic Analysis</h3>
+            <div className="flex items-center gap-2 mb-3">
+              <h3 className="text-sm font-medium text-gray-700">Semantic Analysis</h3>
+              {!semanticEnabled && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-100 text-primary-700 rounded text-xs font-medium">
+                  <Crown className="w-3 h-3" />
+                  Pro
+                </span>
+              )}
+            </div>
             <p className="text-xs text-gray-500 mb-3">
               Use AI embeddings to find semantically related words (e.g., "happy" ↔ "joyful")
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex items-center">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={config.useSemantic}
-                    onChange={(e) => handleChange('useSemantic', e.target.checked)}
-                    className="rounded text-primary-500 focus:ring-primary-500"
-                  />
-                  <span className="text-sm text-gray-600">Enable Semantic Similarity</span>
-                </label>
-              </div>
-              {config.useSemantic && (
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">
-                    Similarity Threshold (0-1)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={config.semanticThreshold}
-                    onChange={(e) => handleChange('semanticThreshold', parseFloat(e.target.value) || 0.5)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Higher = stricter matching
-                  </p>
+
+            {!semanticEnabled ? (
+              <div className="p-4 bg-gradient-to-r from-primary-50 to-purple-50 border border-primary-200 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Crown className="w-5 h-5 text-primary-500 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-900">Semantic Analysis is a Pro Feature</p>
+                    <p className="text-xs text-gray-500">Upgrade to find semantically related words like "happy" and "joyful"</p>
+                  </div>
+                  <button
+                    onClick={() => openUpgradeModal('Upgrade to Pro to unlock semantic analysis')}
+                    className="px-3 py-1.5 bg-primary-500 text-white rounded-md text-sm font-medium hover:bg-primary-600 transition-colors"
+                  >
+                    Upgrade
+                  </button>
                 </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.useSemantic}
+                      onChange={(e) => handleChange('useSemantic', e.target.checked)}
+                      className="rounded text-primary-500 focus:ring-primary-500"
+                    />
+                    <span className="text-sm text-gray-600">Enable Semantic Similarity</span>
+                  </label>
+                </div>
+                {config.useSemantic && (
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">
+                      Similarity Threshold (0-1)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={config.semanticThreshold}
+                      onChange={(e) => handleChange('semanticThreshold', parseFloat(e.target.value) || 0.5)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Higher = stricter matching
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Advanced Settings */}

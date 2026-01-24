@@ -161,6 +161,9 @@ export interface ChatResponse {
   error?: string;
   history: Array<{ role: string; content: string }>;
   tokens_used?: number;
+  chat_remaining?: number | null;
+  limit_exceeded?: boolean;
+  tier?: string;
 }
 
 /**
@@ -169,6 +172,15 @@ export interface ChatResponse {
 export interface ChatStatusResponse {
   available: boolean;
   model: string | null;
+  tier?: string;
+  chat_limit?: {
+    allowed: boolean;
+    remaining?: number | null;
+    tier: string;
+    message?: string;
+    limit?: number;
+    used?: number;
+  };
 }
 
 /**

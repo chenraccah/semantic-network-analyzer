@@ -197,3 +197,56 @@ export interface ControlPanelProps {
   onApply: () => void;
   onExport: () => void;
 }
+
+// ============= Subscription Types =============
+
+export type SubscriptionTier = 'free' | 'pro' | 'enterprise';
+
+export interface TierLimits {
+  max_groups: number;
+  max_analyses_per_day: number | null;
+  max_words: number | null;
+  max_file_size_mb: number;
+  semantic_enabled: boolean;
+  chat_enabled: boolean;
+  chat_messages_per_month: number | null;
+  export_enabled: boolean;
+  save_analyses_days: number;
+  api_access: boolean;
+}
+
+export interface TierPricing {
+  name: string;
+  price: number;
+  price_display: string;
+  description: string;
+}
+
+export interface UsageStatus {
+  allowed: boolean;
+  remaining?: number | null;
+  tier: SubscriptionTier;
+  message?: string;
+  limit?: number;
+  used?: number;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  tier: SubscriptionTier;
+  limits: TierLimits;
+  usage: {
+    analyses_today: number;
+    chat_messages_month: number;
+  };
+  analysis_status: UsageStatus;
+  chat_status: UsageStatus;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
+}
+
+export interface AllTierLimits {
+  tiers: Record<SubscriptionTier, TierLimits>;
+  pricing: Record<SubscriptionTier, TierPricing>;
+}
