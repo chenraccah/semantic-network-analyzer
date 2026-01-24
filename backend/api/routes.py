@@ -2,7 +2,7 @@
 API routes for the semantic network analyzer.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -25,7 +25,22 @@ from core.supabase_client import (
     check_groups_limit,
     check_semantic_enabled,
     check_export_enabled,
-    log_usage
+    log_usage,
+    update_user_tier,
+    update_stripe_customer,
+    save_analysis,
+    get_saved_analyses,
+    get_saved_analysis,
+    delete_saved_analysis,
+    check_save_enabled
+)
+from core.stripe_service import (
+    create_checkout_session,
+    create_customer_portal_session,
+    construct_webhook_event,
+    get_subscription_tier,
+    get_customer_id_from_session,
+    get_subscription_from_session
 )
 
 router = APIRouter()
@@ -854,3 +869,270 @@ async def check_export(
     Check if user can export data.
     """
     return await check_export_enabled(current_user.user_id)
+
+
+# ============================================================
+# BILLING ENDPOINTS
+# ============================================================
+
+class CheckoutRequest(BaseModel):
+    """Request model for creating checkout session."""
+    tier: str
+    success_url: str
+    cancel_url: str
+
+
+class UpdateTierRequest(BaseModel):
+    """Request model for directly updating tier (no payment)."""
+    tier: str
+
+
+@router.post("/billing/update-tier")
+async def update_tier_direct(
+    request: UpdateTierRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Directly update user tier without payment.
+    This is a temporary endpoint for testing - will be replaced by Stripe checkout.
+    """
+    if request.tier not in ('free', 'pro', 'enterprise'):
+        raise HTTPException(status_code=400, detail="Invalid tier")
+
+    success = await update_user_tier(current_user.user_id, request.tier)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update tier")
+
+    # Log the tier change
+    await log_usage(current_user.user_id, "tier_changed", {"new_tier": request.tier})
+
+    return {"success": True, "tier": request.tier}
+
+
+@router.post("/billing/checkout")
+async def create_checkout(
+    request: CheckoutRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Create a Stripe Checkout session for subscription upgrade.
+    """
+    if request.tier not in ('pro', 'enterprise'):
+        raise HTTPException(status_code=400, detail="Invalid tier. Must be 'pro' or 'enterprise'")
+
+    result = create_checkout_session(
+        user_id=current_user.user_id,
+        user_email=current_user.email or "",
+        tier=request.tier,
+        success_url=request.success_url,
+        cancel_url=request.cancel_url
+    )
+
+    if not result:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create checkout session. Stripe may not be configured."
+        )
+
+    # Log the checkout attempt
+    await log_usage(current_user.user_id, "checkout_started", {"tier": request.tier})
+
+    return result
+
+
+@router.post("/billing/portal")
+async def create_portal(
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Create a Stripe Customer Portal session for managing subscription.
+    """
+    profile = await get_user_profile(current_user.user_id)
+    customer_id = profile.get("stripe_customer_id")
+
+    if not customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No billing account found. Please subscribe first."
+        )
+
+    # Get return URL from request origin or use default
+    return_url = f"{settings.CORS_ORIGINS[0]}/billing" if settings.CORS_ORIGINS else "http://localhost:3001/billing"
+
+    portal_url = create_customer_portal_session(customer_id, return_url)
+
+    if not portal_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create portal session"
+        )
+
+    return {"portal_url": portal_url}
+
+
+@router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    """
+    Handle Stripe webhook events for subscription management.
+    """
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    event = construct_webhook_event(payload, sig_header)
+
+    if not event:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    # Handle the event
+    event_type = event.type
+
+    if event_type == "checkout.session.completed":
+        session = event.data.object
+        user_id = session.metadata.get("user_id")
+        tier = session.metadata.get("tier", "pro")
+
+        if user_id:
+            # Get customer and subscription IDs
+            customer_id = get_customer_id_from_session(session)
+            subscription_id = get_subscription_from_session(session)
+
+            # Update user profile with Stripe IDs and tier
+            await update_stripe_customer(user_id, customer_id, subscription_id)
+            await update_user_tier(user_id, tier)
+            await log_usage(user_id, "subscription_started", {"tier": tier})
+
+            print(f"[STRIPE] User {user_id} upgraded to {tier}")
+
+    elif event_type == "customer.subscription.updated":
+        subscription = event.data.object
+        user_id = subscription.metadata.get("user_id")
+
+        if user_id:
+            # Check subscription status
+            if subscription.status == "active":
+                tier = get_subscription_tier(subscription)
+                await update_user_tier(user_id, tier)
+                print(f"[STRIPE] User {user_id} subscription updated to {tier}")
+            elif subscription.status in ("canceled", "unpaid", "past_due"):
+                # Downgrade to free
+                await update_user_tier(user_id, "free")
+                print(f"[STRIPE] User {user_id} downgraded to free (status: {subscription.status})")
+
+    elif event_type == "customer.subscription.deleted":
+        subscription = event.data.object
+        user_id = subscription.metadata.get("user_id")
+
+        if user_id:
+            await update_user_tier(user_id, "free")
+            await log_usage(user_id, "subscription_cancelled", {})
+            print(f"[STRIPE] User {user_id} subscription cancelled, downgraded to free")
+
+    return {"status": "success"}
+
+
+# ============================================================
+# SAVED ANALYSES ENDPOINTS
+# ============================================================
+
+class SaveAnalysisRequest(BaseModel):
+    """Request model for saving an analysis."""
+    name: str
+    config: Dict[str, Any]
+    results: Dict[str, Any]
+
+
+@router.post("/analyses/save")
+async def save_analysis_endpoint(
+    request: SaveAnalysisRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Save an analysis for later retrieval.
+    """
+    # Check if user can save analyses
+    save_check = await check_save_enabled(current_user.user_id)
+
+    if not save_check.get("allowed"):
+        raise HTTPException(
+            status_code=403,
+            detail=save_check.get("message", "Saving analyses requires a Pro subscription")
+        )
+
+    expires_days = save_check.get("expires_days", 7)
+
+    analysis_id = await save_analysis(
+        user_id=current_user.user_id,
+        name=request.name,
+        config=request.config,
+        results=request.results,
+        expires_days=expires_days
+    )
+
+    if not analysis_id:
+        raise HTTPException(status_code=500, detail="Failed to save analysis")
+
+    await log_usage(current_user.user_id, "analysis_saved", {"name": request.name})
+
+    return {
+        "success": True,
+        "id": analysis_id,
+        "expires_days": expires_days
+    }
+
+
+@router.get("/analyses")
+async def list_analyses(
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Get all saved analyses for the current user.
+    """
+    analyses = await get_saved_analyses(current_user.user_id)
+
+    return {
+        "analyses": analyses,
+        "count": len(analyses)
+    }
+
+
+@router.get("/analyses/{analysis_id}")
+async def get_analysis(
+    analysis_id: str,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Get a specific saved analysis by ID.
+    """
+    analysis = await get_saved_analysis(current_user.user_id, analysis_id)
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    return analysis
+
+
+@router.delete("/analyses/{analysis_id}")
+async def delete_analysis(
+    analysis_id: str,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Delete a saved analysis.
+    """
+    success = await delete_saved_analysis(current_user.user_id, analysis_id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete analysis")
+
+    return {"success": True}
+
+
+@router.get("/analyses/check")
+async def check_save_access(
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Check if user can save analyses.
+    """
+    return await check_save_enabled(current_user.user_id)

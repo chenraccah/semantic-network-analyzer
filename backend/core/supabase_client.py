@@ -2,7 +2,7 @@
 Supabase client for user profiles and usage tracking.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import date, datetime
 
 from supabase import create_client, Client
@@ -305,6 +305,31 @@ async def update_user_tier(user_id: str, tier: str) -> bool:
         return False
 
 
+async def update_stripe_customer(
+    user_id: str,
+    customer_id: str,
+    subscription_id: Optional[str] = None
+) -> bool:
+    """
+    Update user's Stripe customer and subscription IDs.
+    """
+    client = get_supabase_client()
+
+    if not client:
+        return False
+
+    try:
+        update_data = {"stripe_customer_id": customer_id}
+        if subscription_id:
+            update_data["stripe_subscription_id"] = subscription_id
+
+        client.table("user_profiles").update(update_data).eq("id", user_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error updating Stripe customer: {e}")
+        return False
+
+
 async def log_usage(user_id: str, action: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
     """
     Log a usage event for analytics.
@@ -324,3 +349,157 @@ async def log_usage(user_id: str, action: str, metadata: Optional[Dict[str, Any]
     except Exception as e:
         print(f"Error logging usage: {e}")
         return False
+
+
+# ============================================================
+# SAVED ANALYSES
+# ============================================================
+
+async def save_analysis(
+    user_id: str,
+    name: str,
+    config: Dict[str, Any],
+    results: Dict[str, Any],
+    expires_days: int
+) -> Optional[str]:
+    """
+    Save an analysis for later retrieval.
+
+    Args:
+        user_id: User ID
+        name: Name for the saved analysis
+        config: Analysis configuration
+        results: Analysis results
+        expires_days: Number of days until expiration (0 = no expiration)
+
+    Returns:
+        ID of saved analysis, or None if failed
+    """
+    client = get_supabase_client()
+
+    if not client:
+        return None
+
+    try:
+        from datetime import datetime, timedelta
+
+        expires_at = None
+        if expires_days > 0:
+            expires_at = (datetime.utcnow() + timedelta(days=expires_days)).isoformat()
+
+        result = client.table("saved_analyses").insert({
+            "user_id": user_id,
+            "name": name,
+            "config": config,
+            "results": results,
+            "expires_at": expires_at
+        }).execute()
+
+        if result.data and len(result.data) > 0:
+            return result.data[0].get("id")
+        return None
+
+    except Exception as e:
+        print(f"Error saving analysis: {e}")
+        return None
+
+
+async def get_saved_analyses(user_id: str) -> List[Dict[str, Any]]:
+    """
+    Get all saved analyses for a user.
+    Excludes expired analyses.
+    """
+    client = get_supabase_client()
+
+    if not client:
+        return []
+
+    try:
+        from datetime import datetime
+
+        result = client.table("saved_analyses").select(
+            "id, name, created_at, expires_at"
+        ).eq("user_id", user_id).order("created_at", desc=True).execute()
+
+        # Filter out expired analyses
+        now = datetime.utcnow()
+        analyses = []
+        for item in result.data:
+            expires_at = item.get("expires_at")
+            if expires_at:
+                exp_date = datetime.fromisoformat(expires_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                if exp_date < now:
+                    continue
+            analyses.append(item)
+
+        return analyses
+
+    except Exception as e:
+        print(f"Error getting saved analyses: {e}")
+        return []
+
+
+async def get_saved_analysis(user_id: str, analysis_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get a specific saved analysis by ID.
+    """
+    client = get_supabase_client()
+
+    if not client:
+        return None
+
+    try:
+        result = client.table("saved_analyses").select("*").eq(
+            "id", analysis_id
+        ).eq("user_id", user_id).execute()
+
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+
+    except Exception as e:
+        print(f"Error getting saved analysis: {e}")
+        return None
+
+
+async def delete_saved_analysis(user_id: str, analysis_id: str) -> bool:
+    """
+    Delete a saved analysis.
+    """
+    client = get_supabase_client()
+
+    if not client:
+        return False
+
+    try:
+        client.table("saved_analyses").delete().eq(
+            "id", analysis_id
+        ).eq("user_id", user_id).execute()
+        return True
+
+    except Exception as e:
+        print(f"Error deleting saved analysis: {e}")
+        return False
+
+
+async def check_save_enabled(user_id: str) -> Dict[str, Any]:
+    """
+    Check if user can save analyses and get their save limit.
+    """
+    profile = await get_user_profile(user_id)
+    tier = profile.get("tier", "free")
+    limits = get_tier_limits(tier)
+    save_days = limits.get("save_analyses_days", 0)
+
+    if save_days == 0:
+        return {
+            "allowed": False,
+            "tier": tier,
+            "message": "Saving analyses is a Pro feature. Upgrade to save your work."
+        }
+
+    return {
+        "allowed": True,
+        "tier": tier,
+        "expires_days": save_days
+    }

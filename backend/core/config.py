@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
 
+    # Stripe Payments
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRO_PRICE_ID: str = ""
+    STRIPE_ENTERPRISE_PRICE_ID: str = ""
+
     # Timeouts
     REQUEST_TIMEOUT: int = 300  # 5 minutes
     

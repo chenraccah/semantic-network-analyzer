@@ -10,7 +10,7 @@ interface ConfigPanelProps {
 }
 
 export function ConfigPanel({ config, onChange, onGroupConfigChange }: ConfigPanelProps) {
-  const { canUseSemantic, openUpgradeModal, tier } = useSubscription();
+  const { canUseSemantic, openUpgradeModal } = useSubscription();
   const [isExpanded, setIsExpanded] = useState(false);
   const [newMappingSource, setNewMappingSource] = useState('');
   const [newMappingTarget, setNewMappingTarget] = useState('');

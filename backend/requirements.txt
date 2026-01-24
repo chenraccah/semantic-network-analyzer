@@ -34,3 +34,6 @@ python-jose[cryptography]>=3.3.0
 
 # Supabase
 supabase>=2.0.0
+
+# Payments
+stripe>=7.0.0

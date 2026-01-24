@@ -10,7 +10,6 @@ export function UsageBanner() {
     tier,
     analysisStatus,
     chatStatus,
-    limits,
     loading,
     openUpgradeModal
   } = useSubscription();
@@ -78,7 +77,7 @@ export function UsageBanner() {
       )}
 
       {/* Upgrade Button */}
-      {tier !== 'enterprise' && (
+      {(tier === 'free' || tier === 'pro') && (
         <button
           onClick={() => openUpgradeModal('Unlock more features and higher limits')}
           className="px-3 py-1 bg-gradient-to-r from-primary-500 to-purple-500 text-white rounded-lg text-sm font-medium hover:from-primary-600 hover:to-purple-600 transition-all"

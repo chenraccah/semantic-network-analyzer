@@ -225,4 +225,123 @@ export async function chatAboutAnalysis(
   return response.data;
 }
 
+/**
+ * Checkout response type
+ */
+export interface CheckoutResponse {
+  session_id: string;
+  checkout_url: string;
+}
+
+/**
+ * Portal response type
+ */
+export interface PortalResponse {
+  portal_url: string;
+}
+
+/**
+ * Create a Stripe checkout session for subscription upgrade
+ */
+export async function createCheckoutSession(
+  tier: 'pro' | 'enterprise',
+  successUrl: string,
+  cancelUrl: string
+): Promise<CheckoutResponse> {
+  const response = await api.post<CheckoutResponse>('/billing/checkout', {
+    tier,
+    success_url: successUrl,
+    cancel_url: cancelUrl
+  });
+  return response.data;
+}
+
+/**
+ * Create a Stripe customer portal session
+ */
+export async function createPortalSession(): Promise<PortalResponse> {
+  const response = await api.post<PortalResponse>('/billing/portal');
+  return response.data;
+}
+
+// ============================================================
+// SAVED ANALYSES API
+// ============================================================
+
+/**
+ * Saved analysis summary (for list view)
+ */
+export interface SavedAnalysisSummary {
+  id: string;
+  name: string;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/**
+ * Full saved analysis with config and results
+ */
+export interface SavedAnalysis {
+  id: string;
+  name: string;
+  config: any;
+  results: any;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/**
+ * Save check response
+ */
+export interface SaveCheckResponse {
+  allowed: boolean;
+  tier: string;
+  expires_days?: number;
+  message?: string;
+}
+
+/**
+ * Check if user can save analyses
+ */
+export async function checkSaveAccess(): Promise<SaveCheckResponse> {
+  const response = await api.get<SaveCheckResponse>('/analyses/check');
+  return response.data;
+}
+
+/**
+ * Save an analysis
+ */
+export async function saveAnalysis(
+  name: string,
+  config: any,
+  results: any
+): Promise<{ success: boolean; id: string; expires_days: number }> {
+  const response = await api.post('/analyses/save', { name, config, results });
+  return response.data;
+}
+
+/**
+ * Get all saved analyses
+ */
+export async function getSavedAnalyses(): Promise<{ analyses: SavedAnalysisSummary[]; count: number }> {
+  const response = await api.get('/analyses');
+  return response.data;
+}
+
+/**
+ * Get a specific saved analysis
+ */
+export async function getSavedAnalysis(id: string): Promise<SavedAnalysis> {
+  const response = await api.get(`/analyses/${id}`);
+  return response.data;
+}
+
+/**
+ * Delete a saved analysis
+ */
+export async function deleteSavedAnalysis(id: string): Promise<{ success: boolean }> {
+  const response = await api.delete(`/analyses/${id}`);
+  return response.data;
+}
+
 export default api;

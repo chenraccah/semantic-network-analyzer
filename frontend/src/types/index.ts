@@ -196,6 +196,7 @@ export interface ControlPanelProps {
   onVisualizationChange: (viz: Partial<VisualizationState>) => void;
   onApply: () => void;
   onExport: () => void;
+  onSave?: () => void;
 }
 
 // ============= Subscription Types =============

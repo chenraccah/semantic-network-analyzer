@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { ConfigPanel } from './components/ConfigPanel';
 import { NetworkGraph } from './components/NetworkGraph';
@@ -8,9 +8,11 @@ import { ChatPanel } from './components/ChatPanel';
 import { AuthForm } from './components/AuthForm';
 import { UsageBanner } from './components/UsageBanner';
 import { UpgradeModal } from './components/UpgradeModal';
+import { BillingPage } from './components/BillingPage';
+import { AnalysisHistory, SaveAnalysisDialog } from './components/AnalysisHistory';
 import { useAuth } from './contexts/AuthContext';
 import { useSubscription } from './contexts/SubscriptionContext';
-import { analyzeMultiGroup } from './utils/api';
+import { analyzeMultiGroup, saveAnalysis, checkSaveAccess } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
 import type {
   AnalysisResult,
@@ -78,6 +80,27 @@ function App() {
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
   const [vizState, setVizState] = useState<VisualizationState>(DEFAULT_VIZ_STATE);
   const [activeTab, setActiveTab] = useState<'upload' | 'analysis'>('upload');
+  const [showBillingPage, setShowBillingPage] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+
+  // Handle checkout success/cancelled from URL params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get('checkout');
+
+    if (checkout === 'success') {
+      setCheckoutMessage('Payment successful! Your subscription has been activated.');
+      refreshProfile();
+      // Clean up URL
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (checkout === 'cancelled') {
+      setCheckoutMessage('Checkout was cancelled. You can try again anytime.');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [refreshProfile]);
 
   // Get the effective max groups based on subscription
   const effectiveMaxGroups = Math.min(getMaxGroups(), MAX_GROUPS_ABSOLUTE);
@@ -234,6 +257,60 @@ function App() {
     downloadCSV(csv, 'semantic_network_analysis.csv');
   }, [analysisResult, filterState.hiddenWords, canExport, openUpgradeModal]);
 
+  // Handle save analysis
+  const handleSaveClick = useCallback(async () => {
+    if (!analysisResult) return;
+
+    // Check if user can save
+    try {
+      const saveCheck = await checkSaveAccess();
+      if (!saveCheck.allowed) {
+        openUpgradeModal(saveCheck.message || 'Saving analyses is a Pro feature.');
+        return;
+      }
+      setShowSaveDialog(true);
+    } catch (err) {
+      console.error('Error checking save access:', err);
+      openUpgradeModal('Saving analyses is a Pro feature.');
+    }
+  }, [analysisResult, openUpgradeModal]);
+
+  const handleSaveAnalysis = useCallback(async (name: string) => {
+    if (!analysisResult) return;
+
+    setIsSaving(true);
+    try {
+      await saveAnalysis(name, config, analysisResult);
+      setShowSaveDialog(false);
+      setCheckoutMessage(`Analysis "${name}" saved successfully!`);
+    } catch (err: any) {
+      console.error('Error saving analysis:', err);
+      setCheckoutMessage(err.response?.data?.detail || 'Failed to save analysis');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [analysisResult, config]);
+
+  // Handle loading a saved analysis
+  const handleLoadAnalysis = useCallback((savedConfig: any, savedResults: any) => {
+    // Restore config
+    setConfig(savedConfig);
+
+    // Restore files array to match groups
+    setFiles(savedConfig.groups.map(() => null));
+
+    // Restore results
+    setAnalysisResult(savedResults);
+
+    // Switch to analysis tab
+    setActiveTab('analysis');
+
+    // Reset filter state
+    setFilterState(DEFAULT_FILTER_STATE);
+
+    setCheckoutMessage('Analysis loaded successfully!');
+  }, []);
+
   // Get analysis data (handle both legacy and new format)
   const getAnalysisData = () => {
     if (!analysisResult) return [];
@@ -274,6 +351,18 @@ function App() {
           <div className="flex items-center gap-4">
             <UsageBanner />
             <span className="text-sm text-primary-100">{user.email}</span>
+            <button
+              onClick={() => setShowHistory(true)}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+            >
+              History
+            </button>
+            <button
+              onClick={() => setShowBillingPage(true)}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+            >
+              Billing
+            </button>
             <button
               onClick={signOut}
               className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
@@ -462,6 +551,7 @@ function App() {
               onVisualizationChange={(changes) => setVizState(prev => ({ ...prev, ...changes }))}
               onApply={() => {}}
               onExport={handleExport}
+              onSave={handleSaveClick}
             />
 
             {/* Network Visualization */}
@@ -502,6 +592,45 @@ function App() {
       {/* Upgrade Modal */}
       {showUpgradeModal && (
         <UpgradeModal onClose={closeUpgradeModal} />
+      )}
+
+      {/* Billing Page */}
+      {showBillingPage && (
+        <BillingPage onClose={() => setShowBillingPage(false)} />
+      )}
+
+      {/* Checkout Success/Cancelled Message */}
+      {checkoutMessage && (
+        <div className="fixed bottom-4 right-4 max-w-md bg-white rounded-lg shadow-lg border p-4 z-50">
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <p className="text-sm text-gray-700">{checkoutMessage}</p>
+            </div>
+            <button
+              onClick={() => setCheckoutMessage(null)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Analysis History Modal */}
+      {showHistory && (
+        <AnalysisHistory
+          onLoad={handleLoadAnalysis}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
+
+      {/* Save Analysis Dialog */}
+      {showSaveDialog && (
+        <SaveAnalysisDialog
+          onSave={handleSaveAnalysis}
+          onClose={() => setShowSaveDialog(false)}
+          saving={isSaving}
+        />
       )}
     </div>
   );

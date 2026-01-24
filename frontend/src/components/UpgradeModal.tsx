@@ -2,21 +2,29 @@
  * Upgrade modal showing pricing tiers and feature comparison
  */
 
-import { X, Check, Zap, Building2 } from 'lucide-react';
+import { useState } from 'react';
+import { X, Check, Zap, Building2, Loader2 } from 'lucide-react';
 import { useSubscription } from '../contexts/SubscriptionContext';
+import api from '../utils/api';
 import type { SubscriptionTier } from '../types';
 
-const TIER_FEATURES = [
-  { key: 'max_groups', label: 'Groups per analysis', format: (v: number | null) => v === null ? 'Unlimited' : v },
-  { key: 'max_analyses_per_day', label: 'Analyses per day', format: (v: number | null) => v === null ? 'Unlimited' : v },
-  { key: 'max_words', label: 'Word limit', format: (v: number | null) => v === null ? 'Unlimited' : v },
-  { key: 'max_file_size_mb', label: 'Max file size', format: (v: number) => `${v} MB` },
-  { key: 'semantic_enabled', label: 'Semantic edges', format: (v: boolean) => v },
-  { key: 'chat_enabled', label: 'GPT chat', format: (v: boolean) => v },
-  { key: 'chat_messages_per_month', label: 'Chat messages/month', format: (v: number | null) => v === null ? 'Unlimited' : v === 0 ? '-' : v },
-  { key: 'export_enabled', label: 'CSV export', format: (v: boolean) => v },
-  { key: 'save_analyses_days', label: 'Save analyses', format: (v: number) => v === 0 ? '-' : `${v} days` },
-  { key: 'api_access', label: 'API access', format: (v: boolean) => v },
+interface TierFeature {
+  key: string;
+  label: string;
+  format: (v: any) => string | number | boolean;
+}
+
+const TIER_FEATURES: TierFeature[] = [
+  { key: 'max_groups', label: 'Groups per analysis', format: (v) => v === null ? 'Unlimited' : v },
+  { key: 'max_analyses_per_day', label: 'Analyses per day', format: (v) => v === null ? 'Unlimited' : v },
+  { key: 'max_words', label: 'Word limit', format: (v) => v === null ? 'Unlimited' : v },
+  { key: 'max_file_size_mb', label: 'Max file size', format: (v) => `${v} MB` },
+  { key: 'semantic_enabled', label: 'Semantic edges', format: (v) => v },
+  { key: 'chat_enabled', label: 'GPT chat', format: (v) => v },
+  { key: 'chat_messages_per_month', label: 'Chat messages/month', format: (v) => v === null ? 'Unlimited' : v === 0 ? '-' : v },
+  { key: 'export_enabled', label: 'CSV export', format: (v) => v },
+  { key: 'save_analyses_days', label: 'Save analyses', format: (v) => v === 0 ? '-' : `${v} days` },
+  { key: 'api_access', label: 'API access', format: (v) => v },
 ];
 
 const TIER_ORDER: SubscriptionTier[] = ['free', 'pro', 'enterprise'];
@@ -26,12 +34,30 @@ interface UpgradeModalProps {
 }
 
 export function UpgradeModal({ onClose }: UpgradeModalProps) {
-  const { tier: currentTier, allTierLimits, upgradeReason } = useSubscription();
+  const { tier: currentTier, allTierLimits, upgradeReason, refreshProfile } = useSubscription();
+  const [loading, setLoading] = useState<SubscriptionTier | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleUpgrade = (tier: SubscriptionTier) => {
-    // For now, just show alert. Will connect to Stripe in Stage 2.
+  const handleUpgrade = async (tier: SubscriptionTier) => {
     if (tier === currentTier) return;
-    alert(`Stripe checkout for ${tier} plan will be implemented in Stage 2. For now, tier upgrades can be done manually in Supabase.`);
+
+    setLoading(tier);
+    setError(null);
+
+    try {
+      // Directly update tier (no payment for now)
+      await api.post('/billing/update-tier', { tier });
+
+      // Refresh profile to get new tier
+      await refreshProfile();
+
+      // Close modal on success
+      onClose();
+    } catch (err: any) {
+      console.error('Upgrade error:', err);
+      setError(err.response?.data?.detail || 'Failed to update plan. Please try again.');
+      setLoading(null);
+    }
   };
 
   const renderFeatureValue = (value: boolean | number | string | null) => {
@@ -160,16 +186,21 @@ export function UpgradeModal({ onClose }: UpgradeModalProps) {
 
                   <button
                     onClick={() => handleUpgrade(tier)}
-                    disabled={isCurrentTier}
-                    className={`w-full py-3 rounded-lg font-semibold transition-colors ${
+                    disabled={isCurrentTier || loading !== null}
+                    className={`w-full py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 ${
                       isCurrentTier
                         ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : loading === tier
+                        ? 'bg-primary-400 text-white cursor-wait'
                         : isPopular
                         ? 'bg-primary-500 text-white hover:bg-primary-600'
+                        : tier === 'free'
+                        ? 'bg-gray-500 text-white hover:bg-gray-600'
                         : 'bg-gray-900 text-white hover:bg-gray-800'
                     }`}
                   >
-                    {isCurrentTier ? 'Current Plan' : tier === 'free' ? 'Downgrade' : 'Upgrade'}
+                    {loading === tier && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isCurrentTier ? 'Current Plan' : loading === tier ? 'Updating...' : tier === 'free' ? 'Downgrade' : 'Upgrade'}
                   </button>
                 </div>
               );
@@ -219,6 +250,13 @@ export function UpgradeModal({ onClose }: UpgradeModalProps) {
               </tbody>
             </table>
           </div>
+
+          {/* Error message */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+              {error}
+            </div>
+          )}
 
           {/* Footer note */}
           <p className="text-center text-sm text-gray-500 mt-6">

@@ -1,4 +1,4 @@
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw, Save } from 'lucide-react';
 import type { ControlPanelProps, FilterType, LayoutType } from '../types';
 
 export function ControlPanel({
@@ -10,6 +10,7 @@ export function ControlPanel({
   onVisualizationChange,
   onApply,
   onExport,
+  onSave,
 }: ControlPanelProps) {
   const numGroups = groupNames.length;
 
@@ -146,6 +147,15 @@ export function ControlPanel({
           <Download className="w-4 h-4" />
           Export CSV
         </button>
+        {onSave && (
+          <button
+            onClick={onSave}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600"
+          >
+            <Save className="w-4 h-4" />
+            Save Analysis
+          </button>
+        )}
       </div>
     </div>
   );
