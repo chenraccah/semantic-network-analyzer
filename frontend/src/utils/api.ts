@@ -15,7 +15,7 @@ const API_BASE_URL = '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 300000, // 5 minutes for large files with semantic analysis
+  timeout: 600000, // 10 minutes for large files with semantic analysis
 });
 
 // Add auth interceptor to attach Bearer token
@@ -84,10 +84,11 @@ export async function analyzeMultiGroup(
     formData.append(`file_${index}`, file);
   });
 
-  // Add group configs as JSON
+  // Add group configs as JSON (includes per-group min_score_threshold)
   const groupConfigs = config.groups.map(g => ({
     name: g.name,
-    text_column: g.textColumn
+    text_column: g.textColumn,
+    min_score_threshold: g.minScoreThreshold ?? config.minScoreThreshold
   }));
   formData.append('group_configs', JSON.stringify(groupConfigs));
 
@@ -99,6 +100,7 @@ export async function analyzeMultiGroup(
   formData.append('delete_words', JSON.stringify(config.deleteWords));
   formData.append('use_semantic', String(config.useSemantic));
   formData.append('semantic_threshold', String(config.semanticThreshold));
+  formData.append('unify_plurals', String(config.unifyPlurals));
 
   const response = await api.post<AnalysisResult>('/analyze/multi', formData);
   return response.data;
@@ -116,8 +118,8 @@ export async function analyzeComparison(
   return analyzeMultiGroup([fileA, fileB], {
     ...config,
     groups: [
-      { name: config.groups[0]?.name || 'Group A', textColumn: config.groups[0]?.textColumn || 1 },
-      { name: config.groups[1]?.name || 'Group B', textColumn: config.groups[1]?.textColumn || 1 }
+      { name: config.groups[0]?.name || 'Group A', textColumn: config.groups[0]?.textColumn || 1, minScoreThreshold: config.groups[0]?.minScoreThreshold ?? config.minScoreThreshold },
+      { name: config.groups[1]?.name || 'Group B', textColumn: config.groups[1]?.textColumn || 1, minScoreThreshold: config.groups[1]?.minScoreThreshold ?? config.minScoreThreshold }
     ]
   });
 }
@@ -341,6 +343,56 @@ export async function getSavedAnalysis(id: string): Promise<SavedAnalysis> {
  */
 export async function deleteSavedAnalysis(id: string): Promise<{ success: boolean }> {
   const response = await api.delete(`/analyses/${id}`);
+  return response.data;
+}
+
+/**
+ * Export analysis in various formats (server-side)
+ */
+export async function exportAnalysis(
+  format: string,
+  nodes: any[],
+  edges: any[],
+  stats: any,
+  groupNames: string[],
+  groupKeys: string[]
+): Promise<Blob> {
+  const response = await api.post('/export', {
+    format,
+    nodes,
+    edges,
+    stats,
+    group_names: groupNames,
+    group_keys: groupKeys,
+  }, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+/**
+ * Compute shortest path between two nodes
+ */
+export async function getShortestPath(
+  source: string,
+  target: string,
+  nodes: any[],
+  edges: any[]
+): Promise<{ success: boolean; path?: string[]; length?: number; hops?: number; error?: string }> {
+  const response = await api.post('/shortest-path', { source, target, nodes, edges });
+  return response.data;
+}
+
+/**
+ * Get ego-network around a center node
+ */
+export async function getEgoNetwork(
+  centerWord: string,
+  hops: number,
+  nodes: any[],
+  edges: any[]
+): Promise<{ success: boolean; ego_nodes: string[]; ego_edges: any[]; num_nodes: number; num_edges: number }> {
+  const response = await api.post('/ego-network', { center_word: centerWord, hops, nodes, edges });
   return response.data;
 }
 

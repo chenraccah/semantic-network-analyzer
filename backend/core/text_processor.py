@@ -89,31 +89,36 @@ class TextProcessor:
     def process_word(self, word: str) -> Optional[str]:
         """
         Process a single word through all transformations.
-        
+
         Returns:
             Processed word or None if it should be filtered out
         """
         # Clean
         word = self.clean_word(word)
-        
+
         # Check length
         if len(word) < self.min_word_length:
             return None
-        
-        # Check stopwords and delete words
+
+        # Check stopwords and delete words (pre-transformation)
         if word in self.stopwords or word in self.delete_words:
             return None
-        
+
         # Apply mappings
         if word in self.word_mappings:
             word = self.word_mappings[word]
-        
+
         # Unify plurals
         if self.unify_plurals:
             singular = self.get_singular(word)
             if singular != word and len(singular) >= self.min_word_length:
                 word = singular
-        
+
+        # Check delete words again after transformations
+        # (catches cases where user deletes the unified/mapped form)
+        if word in self.delete_words:
+            return None
+
         return word
     
     def process_text(self, text: str) -> List[str]:

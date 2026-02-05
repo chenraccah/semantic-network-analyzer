@@ -1,50 +1,94 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState, useImperativeHandle, forwardRef } from 'react';
 import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
 import type { NetworkGraphProps } from '../types';
 import {
   filterNodes,
   getNodeColor,
   getNodeSize,
   getFontSize,
+  filterEdgesByType,
   CLUSTER_COLORS,
   EMPHASIS_COLORS
 } from '../utils/network';
+import { computeClusteredLayout, computeCircularLayout, computeRadialLayout, computeHierarchicalPositions } from '../utils/layouts';
+import { drawClusterHull } from '../utils/geometry';
 
-export function NetworkGraph({
+export interface NetworkGraphHandle {
+  exportImage: (format: 'png' | 'svg') => void;
+}
+
+export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(function NetworkGraph({
   nodes,
   edges,
   filterState,
   visualizationState,
   groupNames,
   groupKeys,
-}: NetworkGraphProps) {
+  highlightedNode,
+  onNodeClick,
+  onNodeRightClick,
+  focusedCluster,
+  pathNodes,
+  egoCenter,
+  selectedNodes,
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
+  const [legendExpanded, setLegendExpanded] = useState(true);
+  const { theme } = useTheme();
 
   const numGroups = groupNames.length;
+  const isDark = theme === 'dark';
+  const fontColor = isDark ? '#e5e7eb' : '#000000';
+  const edgeColor = isDark ? '#555' : '#999';
 
-  // Filter nodes
+  const pathNodeSet = useMemo(() => new Set(pathNodes || []), [pathNodes]);
+
   const filteredNodes = useMemo(() => {
     return filterNodes(nodes, filterState, groupKeys);
   }, [nodes, filterState, groupKeys]);
 
-  // Filter edges
   const filteredEdges = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(n => n.word));
-    return edges.filter(
+    let filtered = edges.filter(
       e => nodeIds.has(e.from) && nodeIds.has(e.to) && e.weight >= filterState.minEdgeWeight
     );
-  }, [edges, filteredNodes, filterState.minEdgeWeight]);
+    filtered = filterEdgesByType(filtered, visualizationState.edgeTypeFilter);
+    return filtered;
+  }, [edges, filteredNodes, filterState.minEdgeWeight, visualizationState.edgeTypeFilter]);
 
-  // Create vis.js nodes
+  // Determine active group key from filter (for cluster-based layouts)
+  const activeGroupKey = useMemo(() => {
+    const ft = filterState.filterType;
+    if (ft.endsWith('_cluster')) return ft.replace('_cluster', '');
+    return groupKeys[0] || '';
+  }, [filterState.filterType, groupKeys]);
+
+  // Pre-compute positions for non-physics layouts
+  const precomputedPositions = useMemo(() => {
+    const layout = visualizationState.layout;
+    if (layout === 'clustered') return computeClusteredLayout(filteredNodes, groupKeys, activeGroupKey);
+    if (layout === 'circular') return computeCircularLayout(filteredNodes, groupKeys);
+    if (layout === 'radial') return computeRadialLayout(filteredNodes, groupKeys);
+    if (layout === 'hierarchical') return computeHierarchicalPositions(filteredNodes, filteredEdges, groupKeys);
+    return null;
+  }, [visualizationState.layout, filteredNodes, filteredEdges, groupKeys, activeGroupKey]);
+
   const visNodes = useMemo(() => {
     return filteredNodes.map(node => {
-      const color = getNodeColor(node, visualizationState.colorMode, groupKeys);
-      const size = getNodeSize(node, visualizationState.colorMode, groupKeys);
-      const fontSize = getFontSize(node.avg_normalized, node.word.length);
+      const color = getNodeColor(
+        node,
+        visualizationState.colorMode,
+        groupKeys,
+        visualizationState.nodeColorMetric,
+        filteredNodes
+      );
+      const size = getNodeSize(node, visualizationState.colorMode, groupKeys, visualizationState.nodeSizeMetric);
+      const fontSize = getFontSize(node.avg_normalized, node.word.length, visualizationState.labelScale ?? 1.0);
 
-      // Build tooltip with dynamic group info
       let tooltipHtml = `<b>${node.word}</b><br/>`;
       groupNames.forEach((name, i) => {
         const key = groupKeys[i];
@@ -54,45 +98,114 @@ export function NetworkGraph({
       });
       if (numGroups === 2) {
         const diff = (node as any).difference ?? 0;
-        tooltipHtml += `Diff: ${diff > 0 ? '+' : ''}${diff}%`;
+        tooltipHtml += `Diff: ${diff > 0 ? '+' : ''}${diff}%<br/>`;
       }
+      // Add advanced metrics to tooltip
+      const pk = groupKeys[0] || '';
+      const pr = (node as any)[`${pk}_pagerank`];
+      const kc = (node as any)[`${pk}_kcore`];
+      if (pr !== undefined) tooltipHtml += `PageRank: ${pr}<br/>`;
+      if (kc !== undefined) tooltipHtml += `K-Core: ${kc}`;
+
+      const isHighlighted = highlightedNode === node.word;
+      const isOnPath = pathNodeSet.has(node.word);
+      const isEgoCenter = egoCenter === node.word;
+      const isSelected = selectedNodes?.has(node.word);
+
+      let borderColor = isDark ? '#888' : '#666';
+      let borderWidth = 2;
+      if (isHighlighted || isSelected) { borderColor = '#FFD700'; borderWidth = 4; }
+      if (isOnPath) { borderColor = '#FFD700'; borderWidth = 3; }
+      if (isEgoCenter) { borderColor = '#00BFFF'; borderWidth = 4; }
+
+      const rawPos = precomputedPositions?.get(node.word);
+      const spread = visualizationState.nodeSpread ?? 1.0;
+      const pos = rawPos ? { x: rawPos.x * spread, y: rawPos.y * spread } : undefined;
 
       return {
         id: node.word,
         label: node.word,
-        size,
+        size: (isHighlighted || isEgoCenter) ? size * 1.5 : size,
         color: {
           background: color,
-          border: '#666',
-          highlight: { background: color, border: '#000' },
+          border: borderColor,
+          highlight: { background: color, border: '#FFD700' },
         },
+        borderWidth,
         font: {
-          size: fontSize,
-          color: 'black',
+          size: isHighlighted ? fontSize * 1.3 : fontSize,
+          color: fontColor,
           face: 'Arial',
         },
         title: tooltipHtml,
+        ...(pos ? { x: pos.x, y: pos.y } : {}),
       };
     });
-  }, [filteredNodes, visualizationState.colorMode, groupNames, groupKeys, numGroups]);
+  }, [filteredNodes, visualizationState, groupNames, groupKeys, numGroups, highlightedNode, isDark, fontColor, pathNodeSet, egoCenter, selectedNodes, precomputedPositions]);
 
-  // Create vis.js edges
   const visEdges = useMemo(() => {
-    return filteredEdges.map(edge => ({
-      from: edge.from,
-      to: edge.to,
-      value: edge.weight,
-      color: { color: '#999', opacity: 0.15, highlight: '#666' },
-      width: Math.max(1, Math.min(5, edge.weight / 10)),
-      smooth: { type: 'continuous' as const, roundness: 0.2 },
-    }));
-  }, [filteredEdges]);
+    return filteredEdges.map(edge => {
+      const isSemantic = edge.edge_type === 'semantic';
+      const isPathEdge = pathNodeSet.has(edge.from) && pathNodeSet.has(edge.to) && pathNodes &&
+        pathNodes.indexOf(edge.from) !== -1 && pathNodes.indexOf(edge.to) !== -1 &&
+        Math.abs(pathNodes.indexOf(edge.from) - pathNodes.indexOf(edge.to)) === 1;
 
-  // Initialize network
+      let tooltipText = `${edge.from} ↔ ${edge.to}\nWeight: ${edge.weight}`;
+      if (edge.semantic_similarity !== undefined) {
+        tooltipText += `\nSemantic: ${edge.semantic_similarity.toFixed(3)}`;
+      }
+
+      return {
+        from: edge.from,
+        to: edge.to,
+        value: edge.weight,
+        color: {
+          color: isPathEdge ? '#FFD700' : edgeColor,
+          opacity: isPathEdge ? 0.8 : 0.15,
+          highlight: isDark ? '#aaa' : '#666',
+        },
+        width: isPathEdge ? 4 : Math.max(1, Math.min(5, edge.weight / 10)),
+        smooth: { type: 'continuous' as const, roundness: 0.2 },
+        dashes: isSemantic ? [5, 5] : false,
+        title: tooltipText,
+      };
+    });
+  }, [filteredEdges, edgeColor, isDark, pathNodeSet, pathNodes]);
+
+  // Expose export function via ref
+  useImperativeHandle(ref, () => ({
+    exportImage(format: 'png' | 'svg') {
+      if (!containerRef.current) return;
+      const canvas = containerRef.current.querySelector('canvas');
+      if (!canvas) return;
+
+      if (format === 'png') {
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = 'network_graph.png';
+        a.click();
+      } else {
+        // SVG fallback using canvas data
+        const dataUrl = canvas.toDataURL('image/png');
+        const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}"><image href="${dataUrl}" width="${canvas.width}" height="${canvas.height}"/></svg>`;
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'network_graph.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }
+  }), []);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const options = {
+    const usePhysics = visualizationState.layout === 'force';
+
+    const options: any = {
       nodes: {
         shape: 'dot',
         borderWidth: 2,
@@ -101,18 +214,6 @@ export function NetworkGraph({
       edges: {
         smooth: { enabled: true, type: 'continuous', roundness: 0.2 },
       },
-      physics: visualizationState.layout === 'force' ? {
-        enabled: true,
-        stabilization: { iterations: 150, updateInterval: 25 },
-        barnesHut: {
-          gravitationalConstant: -5000,
-          centralGravity: 0.05,
-          springLength: 250,
-          springConstant: 0.02,
-          damping: 0.15,
-          avoidOverlap: 1,
-        },
-      } : { enabled: false },
       interaction: {
         hover: true,
         dragNodes: true,
@@ -122,7 +223,47 @@ export function NetworkGraph({
       },
     };
 
-    // Create new network
+    if (visualizationState.layout === 'hierarchical') {
+      // Use vis-network built-in hierarchical if no precomputed positions
+      if (!precomputedPositions) {
+        options.layout = {
+          hierarchical: {
+            direction: 'UD',
+            sortMethod: 'hubsize',
+            levelSeparation: 150,
+            nodeSpacing: 100,
+          },
+        };
+        options.physics = {
+          enabled: true,
+          hierarchicalRepulsion: {
+            centralGravity: 0.0,
+            springLength: 150,
+            springConstant: 0.01,
+            nodeDistance: 120,
+          },
+        };
+      } else {
+        options.physics = { enabled: false };
+      }
+    } else if (usePhysics) {
+      const spread = visualizationState.nodeSpread ?? 1.0;
+      options.physics = {
+        enabled: true,
+        stabilization: { iterations: 150, updateInterval: 25 },
+        barnesHut: {
+          gravitationalConstant: -5000 * spread,
+          centralGravity: 0.05 / spread,
+          springLength: 250 * spread,
+          springConstant: 0.02,
+          damping: 0.15,
+          avoidOverlap: 1,
+        },
+      };
+    } else {
+      options.physics = { enabled: false };
+    }
+
     networkRef.current = new Network(
       containerRef.current,
       {
@@ -132,97 +273,219 @@ export function NetworkGraph({
       options
     );
 
-    // Stop physics after stabilization
     networkRef.current.on('stabilizationIterationsDone', () => {
       networkRef.current?.setOptions({ physics: false });
     });
+
+    if (onNodeClick) {
+      networkRef.current.on('click', (params: any) => {
+        if (params.nodes && params.nodes.length > 0) {
+          onNodeClick(params.nodes[0]);
+        }
+      });
+    }
+
+    if (onNodeRightClick) {
+      networkRef.current.on('oncontext', (params: any) => {
+        params.event.preventDefault();
+        const nodeId = networkRef.current?.getNodeAt(params.pointer.DOM);
+        if (nodeId) {
+          onNodeRightClick(nodeId as string, params.event.clientX, params.event.clientY);
+        }
+      });
+    }
+
+    // Draw cluster hulls after drawing
+    if (visualizationState.showClusterHulls) {
+      networkRef.current.on('afterDrawing', (ctx: CanvasRenderingContext2D) => {
+        const clusterKey = groupKeys[0] ? `${groupKeys[0]}_cluster` : '';
+        if (!clusterKey) return;
+
+        const clusterPoints = new Map<number, { x: number; y: number }[]>();
+        filteredNodes.forEach(node => {
+          const cluster = (node as any)[clusterKey] ?? -1;
+          if (cluster < 0) return;
+          try {
+            const pos = networkRef.current?.getPositions([node.word]);
+            if (pos && pos[node.word]) {
+              if (!clusterPoints.has(cluster)) clusterPoints.set(cluster, []);
+              clusterPoints.get(cluster)!.push(pos[node.word]);
+            }
+          } catch { /* node might not exist */ }
+        });
+
+        clusterPoints.forEach((points, cluster) => {
+          if (points.length >= 2) {
+            const color = cluster < CLUSTER_COLORS.length ? CLUSTER_COLORS[cluster] : '#999';
+            drawClusterHull(ctx, points, color);
+          }
+        });
+      });
+    }
 
     return () => {
       networkRef.current?.destroy();
       networkRef.current = null;
     };
-  }, [visNodes, visEdges, visualizationState.layout]);
+  }, [visNodes, visEdges, visualizationState.layout, visualizationState.showClusterHulls, visualizationState.nodeSpread, onNodeClick, onNodeRightClick, precomputedPositions, groupKeys, filteredNodes]);
 
-  // Get color mode label
+  // Focus on highlighted node
+  useEffect(() => {
+    if (!networkRef.current || !highlightedNode) return;
+    try {
+      networkRef.current.selectNodes([highlightedNode]);
+      networkRef.current.focus(highlightedNode, {
+        scale: 1.5,
+        animation: { duration: 500, easingFunction: 'easeInOutQuad' }
+      });
+    } catch {
+      // Node might not exist
+    }
+  }, [highlightedNode]);
+
+  // Fit when focused cluster changes
+  useEffect(() => {
+    if (!networkRef.current || !focusedCluster) return;
+    setTimeout(() => {
+      networkRef.current?.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+    }, 100);
+  }, [focusedCluster]);
+
   const getColorModeLabel = () => {
+    const metric = visualizationState.nodeColorMetric;
+    if (metric === 'betweenness_gradient') return 'Betweenness Gradient';
+    if (metric === 'pagerank_gradient') return 'PageRank Gradient';
+    if (metric === 'kcore_gradient') return 'K-Core Gradient';
     if (visualizationState.colorMode.endsWith('_cluster')) {
-      // Extract group name from color mode
       const groupKey = visualizationState.colorMode.replace('_cluster', '');
       const groupIndex = groupKeys.indexOf(groupKey);
-      if (groupIndex >= 0) {
-        return `${groupNames[groupIndex]} Clusters`;
-      }
+      if (groupIndex >= 0) return `${groupNames[groupIndex]} Clusters`;
       return 'Clusters';
     }
     return 'Emphasis Groups';
   };
 
-  // Get current group name for cluster mode
-  const getClusterGroupName = () => {
-    if (visualizationState.colorMode.endsWith('_cluster')) {
-      const groupKey = visualizationState.colorMode.replace('_cluster', '');
-      const groupIndex = groupKeys.indexOf(groupKey);
-      if (groupIndex >= 0) {
-        return groupNames[groupIndex];
-      }
-    }
-    return '';
-  };
 
   const isClusterMode = visualizationState.colorMode.endsWith('_cluster');
+  const isGradientMode = visualizationState.nodeColorMetric.endsWith('_gradient');
+  const hasSemantic = filteredEdges.some(e => e.edge_type === 'semantic');
+
+  const getSizeLabel = () => {
+    const m = visualizationState.nodeSizeMetric;
+    const labels: Record<string, string> = {
+      avg_normalized: 'Average normalized score',
+      betweenness: 'Betweenness Centrality',
+      closeness: 'Closeness Centrality',
+      eigenvector: 'Eigenvector Centrality',
+      degree: 'Degree',
+      strength: 'Strength',
+      pagerank: 'PageRank',
+      harmonic: 'Harmonic Centrality',
+      kcore: 'K-Core Number',
+    };
+    if (labels[m]) return labels[m];
+    // Per-group score label
+    if (m.endsWith('_normalized')) {
+      const groupKey = m.replace('_normalized', '');
+      const groupIndex = groupKeys.indexOf(groupKey);
+      if (groupIndex >= 0) return `${groupNames[groupIndex]} Score`;
+    }
+    return m;
+  };
 
   return (
     <div className="p-4">
-      {/* Legend */}
-      <div className="mb-4 flex flex-wrap items-center gap-4 text-sm">
-        <span className="font-medium">🎨 {getColorModeLabel()}:</span>
+      {/* Collapsible Legend */}
+      <div className="mb-4">
+        <button
+          onClick={() => setLegendExpanded(!legendExpanded)}
+          className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
+        >
+          <span>{getColorModeLabel()}</span>
+          {legendExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
 
-        {!isClusterMode ? (
-          numGroups === 2 ? (
-            <>
-              <div className="legend-item">
-                <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_a }} />
-                <span>{groupNames[0]}-emphasized</span>
+        {legendExpanded && (
+          <div className="mt-2 flex flex-wrap items-center gap-4 text-sm">
+            {isGradientMode ? (
+              <div className="flex items-center gap-2">
+                <div className="w-24 h-3 rounded" style={{ background: 'linear-gradient(to right, rgb(0,0,255), rgb(255,200,0), rgb(255,0,0))' }} />
+                <span className="text-gray-600 dark:text-gray-400 text-xs">Low → High</span>
               </div>
-              <div className="legend-item">
-                <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_b }} />
-                <span>{groupNames[1]}-emphasized</span>
-              </div>
-              <div className="legend-item">
-                <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.balanced }} />
-                <span>Balanced</span>
-              </div>
-            </>
-          ) : (
-            <div className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.balanced }} />
-              <span>All words</span>
+            ) : !isClusterMode ? (
+              numGroups === 2 ? (
+                <>
+                  <div className="legend-item">
+                    <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_a }} />
+                    <span className="text-gray-700 dark:text-gray-300">{groupNames[0]}-emphasized</span>
+                  </div>
+                  <div className="legend-item">
+                    <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.group_b }} />
+                    <span className="text-gray-700 dark:text-gray-300">{groupNames[1]}-emphasized</span>
+                  </div>
+                  <div className="legend-item">
+                    <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.balanced }} />
+                    <span className="text-gray-700 dark:text-gray-300">Balanced</span>
+                  </div>
+                </>
+              ) : (
+                <div className="legend-item">
+                  <div className="legend-dot" style={{ backgroundColor: EMPHASIS_COLORS.balanced }} />
+                  <span className="text-gray-700 dark:text-gray-300">All words</span>
+                </div>
+              )
+            ) : (
+              (() => {
+                // Only show clusters that are actually present in the current graph
+                const clusterKey = visualizationState.colorMode; // e.g. 'group_a_cluster'
+                const visibleClusters = new Set<number>();
+                filteredNodes.forEach(n => {
+                  const c = (n as any)[clusterKey];
+                  if (c !== undefined && c >= 0 && c < CLUSTER_COLORS.length) visibleClusters.add(c);
+                });
+                const sorted = [...visibleClusters].sort((a, b) => a - b);
+                return sorted.map(i => (
+                  <div key={i} className="legend-item">
+                    <div className="legend-dot" style={{ backgroundColor: CLUSTER_COLORS[i] }} />
+                    <span className="text-gray-700 dark:text-gray-300">Cluster {i}</span>
+                  </div>
+                ));
+              })()
+            )}
+
+            <div className="w-full border-t border-gray-200 dark:border-gray-700 pt-2 mt-1 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+              <span>Node size = {getSizeLabel()}</span>
+              <span>Edge thickness = Co-occurrence weight</span>
+              {hasSemantic && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-6 border-t-2 border-dashed border-gray-400" />
+                  Semantic edge
+                </span>
+              )}
             </div>
-          )
-        ) : (
-          CLUSTER_COLORS.slice(0, 7).map((color, i) => (
-            <div key={i} className="legend-item">
-              <div className="legend-dot" style={{ backgroundColor: color }} />
-              <span>Cluster {i}</span>
-            </div>
-          ))
+          </div>
         )}
       </div>
 
-      {/* Size mode info for cluster views */}
-      {isClusterMode && (
-        <div className="mb-4 p-2 bg-green-50 border border-green-200 rounded text-sm text-green-800">
-          📏 Node Size: Based on {getClusterGroupName()} Betweenness Centrality
+      {/* Path info */}
+      {pathNodes && pathNodes.length > 0 && (
+        <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-sm text-yellow-800 dark:text-yellow-300">
+          Shortest path: {pathNodes.join(' → ')} ({pathNodes.length - 1} hops)
         </div>
       )}
 
       {/* Filter status */}
-      <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-        Showing {filteredNodes.length} of {nodes.length} words • {filteredEdges.length} edges
+      <div className="mb-4 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm text-blue-800 dark:text-blue-300">
+        Showing {filteredNodes.length} of {nodes.length} words &bull; {filteredEdges.length} edges
+        {focusedCluster && (
+          <span className="ml-2 font-medium">(Cluster {focusedCluster.cluster} focused)</span>
+        )}
+        {egoCenter && (
+          <span className="ml-2 font-medium">(Ego: {egoCenter})</span>
+        )}
       </div>
 
-      {/* Network container */}
       <div ref={containerRef} className="network-container" />
     </div>
   );
-}
+});

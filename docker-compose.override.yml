@@ -1,0 +1,28 @@
+# Development overrides - hot-reload enabled
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      - model-cache:/root/.cache
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - PRELOAD_MODEL=false
+
+  frontend:
+    build:
+      context: ./frontend
+      target: build
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "3001:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000

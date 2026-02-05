@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Moon, Sun, ChevronDown, ChevronUp, ArrowRight, Upload } from 'lucide-react';
 import { FileUpload } from './components/FileUpload';
 import { ConfigPanel } from './components/ConfigPanel';
 import { NetworkGraph } from './components/NetworkGraph';
+import type { NetworkGraphHandle } from './components/NetworkGraph';
 import { DataTable } from './components/DataTable';
 import { ControlPanel } from './components/ControlPanel';
 import { ChatPanel } from './components/ChatPanel';
@@ -10,21 +12,29 @@ import { UsageBanner } from './components/UsageBanner';
 import { UpgradeModal } from './components/UpgradeModal';
 import { BillingPage } from './components/BillingPage';
 import { AnalysisHistory, SaveAnalysisDialog } from './components/AnalysisHistory';
+import { MetricsPanel } from './components/MetricsPanel';
+import { ContextMenu } from './components/ContextMenu';
+import { NodeComparisonPanel } from './components/NodeComparisonPanel';
 import { useAuth } from './contexts/AuthContext';
 import { useSubscription } from './contexts/SubscriptionContext';
-import { analyzeMultiGroup, saveAnalysis } from './utils/api';
+import { useToast } from './contexts/ToastContext';
+import { useTheme } from './contexts/ThemeContext';
+import { analyzeMultiGroup, saveAnalysis, exportAnalysis } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
+import { computeEgoNetwork, computeShortestPath, getNeighbors } from './utils/graphAlgorithms';
 import type {
   AnalysisResult,
   AnalysisConfig,
   FilterState,
   VisualizationState,
-  GroupConfig
+  GroupConfig,
+  ComparisonNode,
+  NetworkEdge
 } from './types';
 
 const DEFAULT_CONFIG: AnalysisConfig = {
   groups: [
-    { name: 'Group 1', textColumn: 1 }
+    { name: 'Group 1', textColumn: 1, minScoreThreshold: 2.0 }
   ],
   minFrequency: 1,
   minScoreThreshold: 2.0,
@@ -36,7 +46,7 @@ const DEFAULT_CONFIG: AnalysisConfig = {
   semanticThreshold: 0.5,
 };
 
-const MAX_GROUPS_ABSOLUTE = 5; // Maximum groups allowed by the system
+const MAX_GROUPS_ABSOLUTE = 5;
 
 const DEFAULT_FILTER_STATE: FilterState = {
   filterType: 'all',
@@ -50,6 +60,12 @@ const DEFAULT_FILTER_STATE: FilterState = {
 const DEFAULT_VIZ_STATE: VisualizationState = {
   layout: 'force',
   colorMode: 'emphasis',
+  nodeSizeMetric: 'avg_normalized',
+  nodeColorMetric: 'emphasis',
+  edgeTypeFilter: 'all',
+  showClusterHulls: false,
+  nodeSpread: 1.0,
+  labelScale: 1.0,
 };
 
 function App() {
@@ -64,8 +80,10 @@ function App() {
     refreshProfile,
     loading: subscriptionLoading
   } = useSubscription();
+  const { addToast } = useToast();
+  const { theme, toggleTheme } = useTheme();
 
-  // File state - array of files matching groups
+  // File state
   const [files, setFiles] = useState<(File | null)[]>([null]);
 
   // Config state
@@ -81,12 +99,35 @@ function App() {
   // UI state
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
   const [vizState, setVizState] = useState<VisualizationState>(DEFAULT_VIZ_STATE);
-  const [activeTab, setActiveTab] = useState<'upload' | 'analysis'>('upload');
+  const [configCollapsed, setConfigCollapsed] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
   const [showBillingPage, setShowBillingPage] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+
+  // Highlighted node for cross-component selection
+  const [highlightedNode, setHighlightedNode] = useState<string | null>(null);
+
+  // Focused cluster for subgraph extraction
+  const [focusedCluster, setFocusedCluster] = useState<{ groupKey: string; cluster: number } | null>(null);
+
+  // Phase 4: Ego-network state
+  const [egoNode, setEgoNode] = useState<string | null>(null);
+  const [egoHops, setEgoHops] = useState(1);
+
+  // Phase 4: Shortest path state
+  const [pathNodes, setPathNodes] = useState<string[]>([]);
+  const [pathSource, setPathSource] = useState<string | null>(null);
+
+  // Phase 4: Multi-select state
+  const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
+
+  // Phase 4: Context menu state
+  const [contextMenu, setContextMenu] = useState<{ word: string; x: number; y: number } | null>(null);
+
+  // NetworkGraph ref for export
+  const graphRef = useRef<NetworkGraphHandle>(null);
 
   // Handle checkout success/cancelled from URL params
   useEffect(() => {
@@ -94,20 +135,17 @@ function App() {
     const checkout = params.get('checkout');
 
     if (checkout === 'success') {
-      setCheckoutMessage('Payment successful! Your subscription has been activated.');
+      addToast('Payment successful! Your subscription has been activated.', 'success', 5000);
       refreshProfile();
-      // Clean up URL
       window.history.replaceState({}, '', window.location.pathname);
     } else if (checkout === 'cancelled') {
-      setCheckoutMessage('Checkout was cancelled. You can try again anytime.');
+      addToast('Checkout was cancelled. You can try again anytime.', 'info');
       window.history.replaceState({}, '', window.location.pathname);
     }
-  }, [refreshProfile]);
+  }, [refreshProfile, addToast]);
 
-  // Get the effective max groups based on subscription
   const effectiveMaxGroups = Math.min(getMaxGroups(), MAX_GROUPS_ABSOLUTE);
 
-  // Add a new group
   const handleAddGroup = useCallback(() => {
     if (config.groups.length >= effectiveMaxGroups) {
       openUpgradeModal(`Your plan allows up to ${effectiveMaxGroups} group(s). Upgrade to analyze more groups.`);
@@ -116,12 +154,11 @@ function App() {
     const newGroupNum = config.groups.length + 1;
     setConfig(prev => ({
       ...prev,
-      groups: [...prev.groups, { name: `Group ${newGroupNum}`, textColumn: 1 }]
+      groups: [...prev.groups, { name: `Group ${newGroupNum}`, textColumn: 1, minScoreThreshold: prev.minScoreThreshold }]
     }));
     setFiles(prev => [...prev, null]);
   }, [config.groups.length, effectiveMaxGroups, openUpgradeModal]);
 
-  // Remove a group
   const handleRemoveGroup = useCallback((index: number) => {
     if (config.groups.length <= 1) return;
     setConfig(prev => ({
@@ -131,7 +168,6 @@ function App() {
     setFiles(prev => prev.filter((_, i) => i !== index));
   }, [config.groups.length]);
 
-  // Update a specific group config
   const handleGroupConfigChange = useCallback((index: number, changes: Partial<GroupConfig>) => {
     setConfig(prev => ({
       ...prev,
@@ -139,7 +175,6 @@ function App() {
     }));
   }, []);
 
-  // Set file for a specific group
   const handleFileSelect = useCallback((index: number, file: File) => {
     setFiles(prev => {
       const newFiles = [...prev];
@@ -148,9 +183,7 @@ function App() {
     });
   }, []);
 
-  // Handle analysis
   const handleAnalyze = useCallback(async () => {
-    // Check that all groups have files
     const validFiles = files.filter((f): f is File => f !== null);
     if (validFiles.length !== config.groups.length) {
       setError('Please select a file for each group');
@@ -161,14 +194,18 @@ function App() {
     setError(null);
     setElapsedTime(0);
     setAnalysisStage('Reading files...');
+    setFocusedCluster(null);
+    setHighlightedNode(null);
+    setEgoNode(null);
+    setPathNodes([]);
+    setPathSource(null);
+    setSelectedNodes(new Set());
 
-    // Start timer
     const startTime = Date.now();
     const timerInterval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTime) / 1000);
       setElapsedTime(elapsed);
 
-      // Update stage based on elapsed time
       if (elapsed < 2) {
         setAnalysisStage('Reading files...');
       } else if (elapsed < 5) {
@@ -187,12 +224,10 @@ function App() {
     try {
       const result = await analyzeMultiGroup(validFiles, config);
       setAnalysisResult(result);
-      setActiveTab('analysis');
+      setConfigCollapsed(true);
       setFilterState(DEFAULT_FILTER_STATE);
-      // Refresh profile to update usage counts
       await refreshProfile();
     } catch (err: any) {
-      // Handle limit exceeded errors
       if (err.response?.status === 403 && err.response?.data?.detail?.error === 'limit_exceeded') {
         const detail = err.response.data.detail;
         openUpgradeModal(detail.message || 'Limit exceeded. Upgrade for higher limits.');
@@ -209,23 +244,26 @@ function App() {
       setIsAnalyzing(false);
       setAnalysisStage('');
     }
-  }, [files, config]);
+  }, [files, config, openUpgradeModal, refreshProfile]);
 
-  // Handle filter changes
   const handleFilterChange = useCallback((changes: Partial<FilterState>) => {
     setFilterState(prev => ({ ...prev, ...changes }));
 
-    // Update color mode based on filter type
     if (changes.filterType) {
       if (changes.filterType.endsWith('_cluster')) {
-        setVizState(prev => ({ ...prev, colorMode: changes.filterType as string }));
+        // Auto-switch to clustered layout and matching color mode
+        setVizState(prev => ({ ...prev, colorMode: changes.filterType as string, layout: 'clustered' }));
       } else {
-        setVizState(prev => ({ ...prev, colorMode: 'emphasis' }));
+        // Switch back to force layout and emphasis color mode
+        setVizState(prev => ({ ...prev, colorMode: 'emphasis', layout: 'force' }));
       }
     }
   }, []);
 
-  // Handle word visibility toggle
+  const handleClearHidden = useCallback(() => {
+    setFilterState(prev => ({ ...prev, hiddenWords: new Set() }));
+  }, []);
+
   const handleToggleVisibility = useCallback((word: string) => {
     setFilterState(prev => {
       const newHidden = new Set(prev.hiddenWords);
@@ -238,32 +276,52 @@ function App() {
     });
   }, []);
 
-  // Handle export
-  const handleExport = useCallback(() => {
+  // Handle export with format support
+  const handleExport = useCallback(async (format: string = 'csv') => {
     if (!analysisResult) return;
 
-    // Check if user can export
-    if (!canExport()) {
-      openUpgradeModal('CSV export is a Pro feature. Upgrade to export your analysis data.');
+    // Handle graph image export
+    if (format === 'png' || format === 'svg') {
+      graphRef.current?.exportImage(format as 'png' | 'svg');
+      addToast(`${format.toUpperCase()} exported`, 'success');
       return;
     }
 
-    const data = analysisResult.analysis_data || analysisResult.comparison_data || [];
-    const csv = exportToCSV(
-      data,
-      analysisResult.group_names,
-      analysisResult.group_keys,
-      filterState.hiddenWords
-    );
+    if (!canExport()) {
+      openUpgradeModal('Export is a Pro feature. Upgrade to export your analysis data.');
+      return;
+    }
 
-    downloadCSV(csv, 'semantic_network_analysis.csv');
-  }, [analysisResult, filterState.hiddenWords, canExport, openUpgradeModal]);
+    if (format === 'csv') {
+      const data = analysisResult.analysis_data || analysisResult.comparison_data || [];
+      const csv = exportToCSV(
+        data,
+        analysisResult.group_names,
+        analysisResult.group_keys,
+        filterState.hiddenWords
+      );
+      downloadCSV(csv, 'semantic_network_analysis.csv');
+      addToast('CSV exported successfully', 'success');
+    } else {
+      try {
+        const data = analysisResult.analysis_data || analysisResult.comparison_data || [];
+        const blob = await exportAnalysis(format, data, analysisResult.edges, analysisResult.stats, analysisResult.group_names, analysisResult.group_keys);
+        const ext = format === 'excel' ? 'xlsx' : format;
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `semantic_network_analysis.${ext}`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        addToast(`${format.toUpperCase()} exported successfully`, 'success');
+      } catch (err: any) {
+        addToast(err.message || 'Export failed', 'error');
+      }
+    }
+  }, [analysisResult, filterState.hiddenWords, canExport, openUpgradeModal, addToast]);
 
-  // Handle save analysis
   const handleSaveClick = useCallback(() => {
     if (!analysisResult) return;
-
-    // Check if user can save (client-side check for instant feedback)
     if (!canSaveAnalyses()) {
       openUpgradeModal('Saving analyses is a Pro feature. Upgrade to save your work.');
       return;
@@ -278,81 +336,179 @@ function App() {
     try {
       await saveAnalysis(name, config, analysisResult);
       setShowSaveDialog(false);
-      setCheckoutMessage(`Analysis "${name}" saved successfully!`);
+      addToast(`Analysis "${name}" saved successfully!`, 'success');
     } catch (err: any) {
       console.error('Error saving analysis:', err);
-      setCheckoutMessage(err.response?.data?.detail || 'Failed to save analysis');
+      addToast(err.response?.data?.detail || 'Failed to save analysis', 'error');
     } finally {
       setIsSaving(false);
     }
-  }, [analysisResult, config]);
+  }, [analysisResult, config, addToast]);
 
-  // Handle loading a saved analysis
   const handleLoadAnalysis = useCallback((savedConfig: any, savedResults: any) => {
-    // Restore config
     setConfig(savedConfig);
-
-    // Restore files array to match groups
     setFiles(savedConfig.groups.map(() => null));
-
-    // Restore results
     setAnalysisResult(savedResults);
-
-    // Switch to analysis tab
-    setActiveTab('analysis');
-
-    // Reset filter state
+    setConfigCollapsed(true);
+    setShowLanding(false);
     setFilterState(DEFAULT_FILTER_STATE);
+    setFocusedCluster(null);
+    setHighlightedNode(null);
+    setEgoNode(null);
+    setPathNodes([]);
+    setPathSource(null);
+    setSelectedNodes(new Set());
+    addToast('Analysis loaded successfully!', 'success');
+  }, [addToast]);
 
-    setCheckoutMessage('Analysis loaded successfully!');
+  // Handle node click from graph or table
+  const handleNodeClick = useCallback((word: string) => {
+    setHighlightedNode(prev => prev === word ? null : word);
   }, []);
 
-  // Get analysis data (handle both legacy and new format)
-  const getAnalysisData = () => {
+  // Handle cluster focus
+  const handleFocusCluster = useCallback((groupKey: string, cluster: number) => {
+    setFocusedCluster({ groupKey, cluster });
+  }, []);
+
+  const handleClearFocus = useCallback(() => {
+    setFocusedCluster(null);
+  }, []);
+
+  // Phase 4: Ego-network
+  const handleEgoNodeChange = useCallback((word: string | null) => {
+    setEgoNode(word);
+  }, []);
+
+  const handleEgoHopsChange = useCallback((hops: number) => {
+    setEgoHops(hops);
+  }, []);
+
+  const handleClearEgo = useCallback(() => {
+    setEgoNode(null);
+  }, []);
+
+  // Phase 4: Context menu handlers
+  const handleNodeRightClick = useCallback((word: string, x: number, y: number) => {
+    setContextMenu({ word, x, y });
+  }, []);
+
+  const handleShowNeighbors = useCallback((word: string) => {
+    if (!analysisResult) return;
+    const edges = analysisResult.edges;
+    const neighbors = getNeighbors(word, edges);
+    addToast(`${word} has ${neighbors.length} neighbors: ${neighbors.slice(0, 5).join(', ')}${neighbors.length > 5 ? '...' : ''}`, 'info', 5000);
+  }, [analysisResult, addToast]);
+
+  const handleFindPathFrom = useCallback((word: string) => {
+    setPathSource(word);
+    setPathNodes([]);
+    addToast(`Path source set to "${word}". Right-click a target node to find path.`, 'info');
+  }, [addToast]);
+
+  const handleFindPathTo = useCallback((word: string) => {
+    if (!pathSource || !analysisResult) return;
+    const path = computeShortestPath(pathSource, word, analysisResult.edges);
+    if (path) {
+      setPathNodes(path);
+      addToast(`Path found: ${path.join(' → ')} (${path.length - 1} hops)`, 'success', 5000);
+    } else {
+      addToast(`No path found between "${pathSource}" and "${word}"`, 'error');
+    }
+    setPathSource(null);
+  }, [pathSource, analysisResult, addToast]);
+
+  const handleContextFocusCluster = useCallback((word: string) => {
+    if (!analysisResult) return;
+    const data = analysisResult.analysis_data || analysisResult.comparison_data || [];
+    const node = data.find(n => n.word === word);
+    if (node && analysisResult.group_keys.length > 0) {
+      const gk = analysisResult.group_keys[0];
+      const cluster = (node as any)[`${gk}_cluster`];
+      if (cluster !== undefined && cluster >= 0) {
+        setFocusedCluster({ groupKey: gk, cluster });
+      }
+    }
+  }, [analysisResult]);
+
+  // Get analysis data with memoization
+  const analysisData = useMemo(() => {
     if (!analysisResult) return [];
     return analysisResult.analysis_data || analysisResult.comparison_data || [];
-  };
+  }, [analysisResult]);
 
-  // Get shared words count
+  // Filter data by focused cluster
+  const clusterFilteredData = useMemo((): ComparisonNode[] => {
+    if (!focusedCluster) return analysisData;
+    return analysisData.filter(node => {
+      const clusterKey = `${focusedCluster.groupKey}_cluster`;
+      return (node as any)[clusterKey] === focusedCluster.cluster;
+    });
+  }, [analysisData, focusedCluster]);
+
+  // Apply ego-network filter and exclude hidden words
+  const displayData = useMemo((): ComparisonNode[] => {
+    let data = clusterFilteredData;
+    if (egoNode && analysisResult) {
+      const ego = computeEgoNetwork(egoNode, data, analysisResult.edges, egoHops);
+      data = ego.nodes;
+    }
+    if (filterState.hiddenWords.size > 0) {
+      data = data.filter(n => !filterState.hiddenWords.has(n.word));
+    }
+    return data;
+  }, [clusterFilteredData, egoNode, egoHops, analysisResult, filterState.hiddenWords]);
+
+  const displayEdges = useMemo((): NetworkEdge[] => {
+    if (!analysisResult) return [];
+    const edges = analysisResult.edges;
+    const nodeWords = new Set(displayData.map(n => n.word));
+    return edges.filter(e => nodeWords.has(e.from) && nodeWords.has(e.to));
+  }, [analysisResult, displayData]);
+
   const getSharedWordsCount = () => {
     if (!analysisResult) return 0;
     return analysisResult.stats.words_in_all ?? analysisResult.stats.words_in_both ?? 0;
   };
 
-  // Show loading state while checking auth
+  // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-500">Loading...</div>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-gray-500 dark:text-gray-400">Loading...</div>
       </div>
     );
   }
 
-  // Show auth form if not logged in
   if (!user) {
     return <AuthForm />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <header className="bg-gradient-to-r from-primary-500 to-purple-600 text-white py-6 px-4">
-        <div className="max-w-7xl mx-auto flex justify-between items-start">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start gap-4">
           <div>
             <h1 className="text-3xl font-bold">Semantic Network Analyzer</h1>
             <p className="mt-2 text-primary-100">
               Compare and visualize semantic patterns between groups
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <UsageBanner />
             <span className="text-sm text-primary-100">{user.email}</span>
+            {/* Dark mode toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
             <button
               onClick={() => {
-                // Wait for subscription to load before checking
-                if (subscriptionLoading) {
-                  return;
-                }
+                if (subscriptionLoading) return;
                 if (canSaveAnalyses()) {
                   setShowHistory(true);
                 } else {
@@ -380,173 +536,233 @@ function App() {
         </div>
       </header>
 
-      {/* Tab Navigation */}
-      <div className="max-w-7xl mx-auto px-4 mt-6">
-        <div className="flex space-x-4 border-b border-gray-200">
-          <button
-            onClick={() => setActiveTab('upload')}
-            className={`px-4 py-2 font-medium ${
-              activeTab === 'upload'
-                ? 'text-primary-600 border-b-2 border-primary-600'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            📁 Upload & Configure
-          </button>
-          <button
-            onClick={() => setActiveTab('analysis')}
-            disabled={!analysisResult}
-            className={`px-4 py-2 font-medium ${
-              activeTab === 'analysis'
-                ? 'text-primary-600 border-b-2 border-primary-600'
-                : 'text-gray-500 hover:text-gray-700'
-            } ${!analysisResult ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            📊 Analysis
-          </button>
-        </div>
-      </div>
-
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        {activeTab === 'upload' && (
-          <div className="space-y-6">
-            {/* File Upload Section */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex justify-between items-center mb-4">
-                <div>
-                  <h2 className="text-xl font-semibold">Upload Files</h2>
-                  <p className="text-sm text-gray-500">
-                    {config.groups.length}/{effectiveMaxGroups} groups
-                    {effectiveMaxGroups < MAX_GROUPS_ABSOLUTE && (
-                      <button
-                        onClick={() => openUpgradeModal('Upgrade to analyze more groups')}
-                        className="ml-2 text-primary-500 hover:text-primary-600"
-                      >
-                        (upgrade for more)
-                      </button>
-                    )}
-                  </p>
+      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* Landing Page */}
+        {showLanding && !analysisResult && (
+          <div className="flex flex-col items-center justify-center py-20">
+            <div className="text-center max-w-xl">
+              <h2 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-4">
+                Analyze Semantic Networks
+              </h2>
+              <p className="text-lg text-gray-500 dark:text-gray-400 mb-8">
+                Upload your text data, build co-occurrence networks, and discover patterns across groups.
+              </p>
+              <button
+                onClick={() => setShowLanding(false)}
+                className="inline-flex items-center gap-2 px-8 py-3 bg-primary-500 text-white rounded-lg font-semibold text-lg hover:bg-primary-600 transition-colors"
+              >
+                Get Started
+                <ArrowRight className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Upload & Configure Section — shown after landing dismissed, no results yet */}
+        {!showLanding && !analysisResult && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+            <div className="px-6 py-4 border-b dark:border-gray-700">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Upload & Configure</h2>
+            </div>
+            <div className="px-6 pb-6 space-y-6">
+              {/* File Upload Section */}
+              <div className="pt-4">
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Upload Files</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      {config.groups.length}/{effectiveMaxGroups} groups
+                      {effectiveMaxGroups < MAX_GROUPS_ABSOLUTE && (
+                        <button
+                          onClick={() => openUpgradeModal('Upgrade to analyze more groups')}
+                          className="ml-2 text-primary-500 hover:text-primary-600"
+                        >
+                          (upgrade for more)
+                        </button>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleAddGroup}
+                    disabled={config.groups.length >= MAX_GROUPS_ABSOLUTE}
+                    className={`px-4 py-2 rounded text-sm ${
+                      config.groups.length >= effectiveMaxGroups
+                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                        : 'bg-primary-500 text-white hover:bg-primary-600'
+                    }`}
+                  >
+                    + Add Group
+                  </button>
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {config.groups.map((group, index) => (
+                    <div key={index} className="relative">
+                      {config.groups.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveGroup(index)}
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full text-sm hover:bg-red-600 z-10"
+                          title="Remove group"
+                        >
+                          ×
+                        </button>
+                      )}
+                      <FileUpload
+                        label={group.name}
+                        onFileSelect={(file) => handleFileSelect(index, file)}
+                        selectedFile={files[index] ?? undefined}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <ConfigPanel
+                config={config}
+                onChange={setConfig}
+                onGroupConfigChange={handleGroupConfigChange}
+              />
+
+              <div className="flex flex-col items-center gap-4">
                 <button
-                  onClick={handleAddGroup}
-                  disabled={config.groups.length >= MAX_GROUPS_ABSOLUTE}
-                  className={`px-4 py-2 rounded text-sm ${
-                    config.groups.length >= effectiveMaxGroups
-                      ? 'bg-gray-300 text-gray-500'
-                      : 'bg-primary-500 text-white hover:bg-primary-600'
+                  onClick={handleAnalyze}
+                  disabled={files.some(f => f === null) || isAnalyzing}
+                  className={`px-8 py-3 rounded-lg font-semibold text-white ${
+                    files.some(f => f === null) || isAnalyzing
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-green-500 hover:bg-green-600'
                   }`}
                 >
-                  + Add Group
+                  {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {config.groups.map((group, index) => (
-                  <div key={index} className="relative">
-                    {config.groups.length > 1 && (
-                      <button
-                        onClick={() => handleRemoveGroup(index)}
-                        className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full text-sm hover:bg-red-600 z-10"
-                        title="Remove group"
-                      >
-                        ×
-                      </button>
-                    )}
-                    <FileUpload
-                      label={group.name}
-                      onFileSelect={(file) => handleFileSelect(index, file)}
-                      selectedFile={files[index] ?? undefined}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Configuration Section */}
-            <ConfigPanel
-              config={config}
-              onChange={setConfig}
-              onGroupConfigChange={handleGroupConfigChange}
-            />
-
-            {/* Analyze Button */}
-            <div className="flex flex-col items-center gap-4">
-              <button
-                onClick={handleAnalyze}
-                disabled={files.some(f => f === null) || isAnalyzing}
-                className={`px-8 py-3 rounded-lg font-semibold text-white ${
-                  files.some(f => f === null) || isAnalyzing
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-green-500 hover:bg-green-600'
-                }`}
-              >
-                {isAnalyzing ? '🔄 Analyzing...' : '🚀 Run Analysis'}
-              </button>
-
-              {/* Progress Indicator */}
-              {isAnalyzing && (
-                <div className="w-full max-w-md bg-white rounded-lg shadow p-4">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm font-medium text-gray-700">{analysisStage}</span>
-                    <span className="text-sm text-gray-500">{elapsedTime}s</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-primary-500 h-2 rounded-full transition-all duration-500 animate-pulse"
-                      style={{ width: `${Math.min((elapsedTime / (config.useSemantic ? 60 : 30)) * 100, 95)}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-400 mt-2 text-center">
-                    {config.useSemantic
-                      ? 'Semantic analysis may take up to 2 minutes for large files'
-                      : 'Analysis typically takes 10-30 seconds'}
-                  </p>
+              {error && (
+                <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded">
+                  {error}
                 </div>
               )}
             </div>
+          </div>
+        )}
 
-            {/* Error Display */}
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-                {error}
+        {/* Config Section — collapsible, shown when results exist */}
+        {analysisResult && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+            <button
+              onClick={() => setConfigCollapsed(!configCollapsed)}
+              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            >
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Configuration</h2>
+              {configCollapsed ? <ChevronDown className="w-5 h-5 text-gray-500" /> : <ChevronUp className="w-5 h-5 text-gray-500" />}
+            </button>
+
+            {!configCollapsed && (
+              <div className="px-6 pb-6 space-y-6 border-t dark:border-gray-700 pt-4">
+                <ConfigPanel
+                  config={config}
+                  onChange={setConfig}
+                  onGroupConfigChange={handleGroupConfigChange}
+                />
+
+                <div className="flex flex-col items-center gap-4">
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={handleAnalyze}
+                      disabled={files.every(f => f === null) || isAnalyzing}
+                      className={`px-8 py-3 rounded-lg font-semibold text-white ${
+                        files.every(f => f === null) || isAnalyzing
+                          ? 'bg-gray-400 cursor-not-allowed'
+                          : 'bg-green-500 hover:bg-green-600'
+                      }`}
+                    >
+                      {isAnalyzing ? 'Analyzing...' : 'Re-Analyze'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setAnalysisResult(null);
+                        setShowLanding(false);
+                      }}
+                      className="flex items-center gap-2 px-6 py-3 border border-gray-300 dark:border-gray-600 rounded-lg font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    >
+                      <Upload className="w-4 h-4" />
+                      Re-Upload Files
+                    </button>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded">
+                    {error}
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
 
-        {activeTab === 'analysis' && analysisResult && (
+        {/* Progress Bar — shown when analyzing */}
+        {isAnalyzing && (
+          <div className="w-full max-w-md mx-auto bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{analysisStage}</span>
+              <span className="text-sm text-gray-500 dark:text-gray-400">{elapsedTime}s</span>
+            </div>
+            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-primary-500 h-2 rounded-full transition-all duration-500 animate-pulse"
+                style={{ width: `${Math.min((elapsedTime / (config.useSemantic ? 60 : 30)) * 100, 95)}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-2 text-center">
+              {config.useSemantic
+                ? 'Semantic analysis may take up to 2 minutes for large files'
+                : 'Analysis typically takes 10-30 seconds'}
+            </p>
+          </div>
+        )}
+
+        {/* Results Section */}
+        {analysisResult && !isAnalyzing && (
           <div className="space-y-6">
             {/* Stats Summary */}
-            <div className="bg-white rounded-lg shadow p-6">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary-600">
+                  <div className="text-3xl font-bold text-primary-600 dark:text-primary-400">
                     {analysisResult.stats.total_words}
                   </div>
-                  <div className="text-sm text-gray-500">Total Words</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Total Words</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary-600">
+                  <div className="text-3xl font-bold text-primary-600 dark:text-primary-400">
                     {getSharedWordsCount()}
                   </div>
-                  <div className="text-sm text-gray-500">
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
                     {analysisResult.num_groups > 1 ? 'In All Groups' : 'Unique'}
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary-600">
+                  <div className="text-3xl font-bold text-primary-600 dark:text-primary-400">
                     {analysisResult.stats.total_edges}
                   </div>
-                  <div className="text-sm text-gray-500">Edges</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Edges</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary-600">
-                    {getAnalysisData().length - filterState.hiddenWords.size}
+                  <div className="text-3xl font-bold text-primary-600 dark:text-primary-400">
+                    {displayData.length}
                   </div>
-                  <div className="text-sm text-gray-500">Visible</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Visible</div>
                 </div>
               </div>
             </div>
+
+            {/* Network Metrics Panel */}
+            <MetricsPanel
+              stats={analysisResult.stats}
+              groupNames={analysisResult.group_names}
+              groupKeys={analysisResult.group_keys}
+            />
 
             {/* Control Panel */}
             <ControlPanel
@@ -556,38 +772,67 @@ function App() {
               groupKeys={analysisResult.group_keys}
               onFilterChange={handleFilterChange}
               onVisualizationChange={(changes) => setVizState(prev => ({ ...prev, ...changes }))}
-              onApply={() => {}}
               onExport={handleExport}
               onSave={handleSaveClick}
+              focusedCluster={focusedCluster}
+              onClearFocus={handleClearFocus}
+              nodes={analysisData}
+              egoNode={egoNode}
+              egoHops={egoHops}
+              onEgoNodeChange={handleEgoNodeChange}
+              onEgoHopsChange={handleEgoHopsChange}
+              onClearEgo={handleClearEgo}
+            />
+
+            {/* Node Comparison Panel */}
+            <NodeComparisonPanel
+              selectedNodes={selectedNodes}
+              nodes={analysisData}
+              groupNames={analysisResult.group_names}
+              groupKeys={analysisResult.group_keys}
+              onRemoveNode={(word) => setSelectedNodes(prev => { const s = new Set(prev); s.delete(word); return s; })}
+              onClear={() => setSelectedNodes(new Set())}
             />
 
             {/* Network Visualization */}
-            <div className="bg-white rounded-lg shadow">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
               <NetworkGraph
-                nodes={getAnalysisData()}
-                edges={analysisResult.edges}
+                ref={graphRef}
+                nodes={displayData}
+                edges={displayEdges}
                 filterState={filterState}
                 visualizationState={vizState}
                 groupNames={analysisResult.group_names}
                 groupKeys={analysisResult.group_keys}
+                highlightedNode={highlightedNode}
+                onNodeClick={handleNodeClick}
+                onNodeRightClick={handleNodeRightClick}
+                focusedCluster={focusedCluster}
+                pathNodes={pathNodes}
+                egoCenter={egoNode}
+                selectedNodes={selectedNodes}
               />
             </div>
 
             {/* Data Table */}
-            <div className="bg-white rounded-lg shadow">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
               <DataTable
-                data={getAnalysisData()}
+                data={displayData}
                 filterState={filterState}
                 groupNames={analysisResult.group_names}
                 groupKeys={analysisResult.group_keys}
                 onToggleVisibility={handleToggleVisibility}
                 onSearch={(query) => handleFilterChange({ searchQuery: query })}
+                highlightedNode={highlightedNode}
+                onNodeClick={handleNodeClick}
+                onFocusCluster={handleFocusCluster}
+                onClearHidden={handleClearHidden}
               />
             </div>
 
-            {/* Chat Panel - floating button that opens chat */}
+            {/* Chat Panel */}
             <ChatPanel
-              analysisData={getAnalysisData()}
+              analysisData={displayData}
               stats={analysisResult.stats}
               groupNames={analysisResult.group_names}
               groupKeys={analysisResult.group_keys}
@@ -596,34 +841,30 @@ function App() {
         )}
       </main>
 
-      {/* Upgrade Modal */}
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          word={contextMenu.word}
+          onClose={() => setContextMenu(null)}
+          onShowNeighbors={handleShowNeighbors}
+          onFindPathFrom={handleFindPathFrom}
+          onFindPathTo={handleFindPathTo}
+          onFocusCluster={handleContextFocusCluster}
+          onHideNode={handleToggleVisibility}
+          pathSource={pathSource}
+        />
+      )}
+
       {showUpgradeModal && (
         <UpgradeModal onClose={closeUpgradeModal} />
       )}
 
-      {/* Billing Page */}
       {showBillingPage && (
         <BillingPage onClose={() => setShowBillingPage(false)} />
       )}
 
-      {/* Checkout Success/Cancelled Message */}
-      {checkoutMessage && (
-        <div className="fixed bottom-4 right-4 max-w-md bg-white rounded-lg shadow-lg border p-4 z-50">
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
-              <p className="text-sm text-gray-700">{checkoutMessage}</p>
-            </div>
-            <button
-              onClick={() => setCheckoutMessage(null)}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              &times;
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Analysis History Modal */}
       {showHistory && (
         <AnalysisHistory
           onLoad={handleLoadAnalysis}
@@ -631,7 +872,6 @@ function App() {
         />
       )}
 
-      {/* Save Analysis Dialog */}
       {showSaveDialog && (
         <SaveAnalysisDialog
           onSave={handleSaveAnalysis}

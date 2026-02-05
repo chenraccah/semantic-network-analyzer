@@ -57,12 +57,18 @@ class Settings(BaseSettings):
     STRIPE_PRO_PRICE_ID: str = ""
     STRIPE_ENTERPRISE_PRICE_ID: str = ""
 
+    # Model Loading
+    PRELOAD_MODEL: bool = True  # Set to False for faster startup in dev
+
+    # Environment
+    ENVIRONMENT: str = "development"  # "development" or "production"
+
     # Timeouts
     REQUEST_TIMEOUT: int = 300  # 5 minutes
-    
+
     # Temp files
     TEMP_DIR: str = "/tmp/semantic-network"
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = True

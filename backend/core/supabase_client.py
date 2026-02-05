@@ -491,7 +491,8 @@ async def check_save_enabled(user_id: str) -> Dict[str, Any]:
     limits = get_tier_limits(tier)
     save_days = limits.get("save_analyses_days", 0)
 
-    if save_days == 0:
+    # None means saved forever (enterprise), positive int means N days (pro), 0 means disabled (free)
+    if save_days is not None and save_days == 0:
         return {
             "allowed": False,
             "tier": tier,
@@ -501,5 +502,5 @@ async def check_save_enabled(user_id: str) -> Dict[str, Any]:
     return {
         "allowed": True,
         "tier": tier,
-        "expires_days": save_days
+        "expires_days": save_days if save_days is not None else 0
     }

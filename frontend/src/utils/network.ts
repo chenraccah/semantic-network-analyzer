@@ -2,7 +2,7 @@
  * Utility functions for network visualization
  */
 
-import type { ComparisonNode, FilterState, ColorMode } from '../types';
+import type { ComparisonNode, FilterState, ColorMode, NodeSizeMetric, NodeColorMetric, EdgeTypeFilter, NetworkEdge } from '../types';
 
 // Cluster colors
 export const CLUSTER_COLORS = [
@@ -31,16 +31,46 @@ export function getEmphasisType(difference: number | undefined): 'group_a' | 'gr
 }
 
 /**
- * Get node color based on color mode
+ * Blue → Red sequential gradient for metric visualization
+ */
+export function getMetricGradientColor(value: number, min: number, max: number): string {
+  const range = max - min;
+  const t = range > 0 ? (value - min) / range : 0;
+  // Blue (low) → Yellow (mid) → Red (high)
+  const r = Math.round(t < 0.5 ? t * 2 * 255 : 255);
+  const g = Math.round(t < 0.5 ? t * 2 * 200 : (1 - t) * 2 * 200);
+  const b = Math.round(t < 0.5 ? 255 - t * 2 * 255 : 0);
+  return `rgb(${r},${g},${b})`;
+}
+
+/**
+ * Get node color based on color mode and color metric
  */
 export function getNodeColor(
   node: ComparisonNode,
   colorMode: ColorMode,
-  _groupKeys: string[] = []
+  _groupKeys: string[] = [],
+  nodeColorMetric?: NodeColorMetric,
+  allNodes?: ComparisonNode[]
 ): string {
+  // Handle gradient color metrics
+  if (nodeColorMetric && nodeColorMetric !== 'emphasis' && nodeColorMetric !== 'cluster') {
+    if (nodeColorMetric.endsWith('_gradient') && allNodes) {
+      const metricKey = nodeColorMetric.replace('_gradient', '');
+      const firstGroupKey = _groupKeys[0] || '';
+      const fullKey = `${firstGroupKey}_${metricKey}`;
+
+      const values = allNodes.map(n => Number((n as any)[fullKey]) || 0);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const val = Number((node as any)[fullKey]) || 0;
+      return getMetricGradientColor(val, min, max);
+    }
+  }
+
   // Check if it's a cluster mode (ends with _cluster)
   if (colorMode.endsWith('_cluster')) {
-    const clusterKey = colorMode;  // e.g., "group_1_cluster"
+    const clusterKey = colorMode;
     const cluster = (node as any)[clusterKey] ?? -1;
     return cluster >= 0 && cluster < CLUSTER_COLORS.length
       ? CLUSTER_COLORS[cluster]
@@ -54,38 +84,64 @@ export function getNodeColor(
 }
 
 /**
- * Get node size based on mode
+ * Get node size based on mode and size metric
  */
 export function getNodeSize(
   node: ComparisonNode,
   colorMode: ColorMode,
-  _groupKeys: string[] = []
+  _groupKeys: string[] = [],
+  sizeMetric?: NodeSizeMetric
 ): number {
   const MIN_SIZE = 30;
   const MAX_SIZE = 80;
 
-  let value: number;
+  if (sizeMetric && sizeMetric !== 'avg_normalized') {
+    // Per-group normalized score (e.g. "group_a_normalized")
+    if (sizeMetric.endsWith('_normalized')) {
+      const value = (Number((node as any)[sizeMetric]) || 0) / 100;
+      return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
+    }
+
+    const firstGroupKey = _groupKeys[0] || '';
+    const fullKey = `${firstGroupKey}_${sizeMetric}`;
+    const value = Number((node as any)[fullKey]) || 0;
+
+    // kcore is integer, normalize differently
+    if (sizeMetric === 'kcore') {
+      return Math.max(MIN_SIZE, MIN_SIZE + Math.min(value / 10, 1) * (MAX_SIZE - MIN_SIZE));
+    }
+    return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
+  }
 
   // Check if it's a cluster mode
   if (colorMode.endsWith('_cluster')) {
-    // Extract the group key from color mode (e.g., "group_1_cluster" -> "group_1")
     const groupKey = colorMode.replace('_cluster', '');
     const betweennessKey = `${groupKey}_betweenness`;
-    value = (node as any)[betweennessKey] ?? 0;
+    const value = (node as any)[betweennessKey] ?? 0;
     return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
   }
 
   // Default: use average normalized score
-  value = node.avg_normalized / 100;
+  const value = node.avg_normalized / 100;
   return Math.max(MIN_SIZE, MIN_SIZE + value * (MAX_SIZE - MIN_SIZE));
 }
 
 /**
  * Get font size for node label
  */
-export function getFontSize(avgNormalized: number, wordLength: number): number {
+export function getFontSize(avgNormalized: number, wordLength: number, labelScale: number = 1.0): number {
   const baseSize = Math.max(14, 12 + (avgNormalized / 100) * 12);
-  return Math.min(baseSize, 300 / wordLength);
+  return Math.min(baseSize, 300 / wordLength) * labelScale;
+}
+
+/**
+ * Filter edges by type
+ */
+export function filterEdgesByType(edges: NetworkEdge[], edgeTypeFilter: EdgeTypeFilter): NetworkEdge[] {
+  if (edgeTypeFilter === 'all') return edges;
+  if (edgeTypeFilter === 'semantic') return edges.filter(e => e.edge_type === 'semantic');
+  if (edgeTypeFilter === 'cooccurrence') return edges.filter(e => e.edge_type !== 'semantic');
+  return edges;
 }
 
 /**
@@ -120,13 +176,11 @@ export function filterNodes(
     else if (groupKeys.includes(filterType)) {
       const normalizedKey = `${filterType}_normalized`;
       const thisNorm = (node as any)[normalizedKey] ?? 0;
-      // Find max normalized among other groups
       const otherMaxNorm = Math.max(
         ...groupKeys
           .filter(k => k !== filterType)
           .map(k => (node as any)[`${k}_normalized`] ?? 0)
       );
-      // Only include if this group is emphasized (higher than others by 10%)
       if (thisNorm - otherMaxNorm <= 10) return false;
     }
     // Handle balanced filter
@@ -196,7 +250,11 @@ export function exportToCSV(
       `${groupNames[i]}_Strength`,
       `${groupNames[i]}_Betweenness`,
       `${groupNames[i]}_Closeness`,
-      `${groupNames[i]}_Eigenvector`
+      `${groupNames[i]}_Eigenvector`,
+      `${groupNames[i]}_PageRank`,
+      `${groupNames[i]}_Harmonic`,
+      `${groupNames[i]}_KCore`,
+      `${groupNames[i]}_Constraint`
     );
   });
 
@@ -242,7 +300,11 @@ export function exportToCSV(
         (node as any)[`${key}_strength`] ?? 0,
         (node as any)[`${key}_betweenness`] ?? 0,
         (node as any)[`${key}_closeness`] ?? 0,
-        (node as any)[`${key}_eigenvector`] ?? 0
+        (node as any)[`${key}_eigenvector`] ?? 0,
+        (node as any)[`${key}_pagerank`] ?? 0,
+        (node as any)[`${key}_harmonic`] ?? 0,
+        (node as any)[`${key}_kcore`] ?? 0,
+        (node as any)[`${key}_constraint`] ?? 0
       );
     });
 

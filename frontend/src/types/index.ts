@@ -65,6 +65,12 @@ export interface NetworkStats {
   words_in_all?: number;   // Words in all groups
   words_in_both?: number;  // For 2 groups: backwards compatibility
   total_edges: number;
+  // Advanced network metrics
+  density?: number;
+  diameter?: number;
+  avg_path_length?: number;
+  modularity?: number;
+  clustering_coefficient?: number;
   // Dynamic keys per group: {group_key}_total, {group_key}_clusters, {group_key}_only
   [key: string]: number | undefined;
 }
@@ -116,6 +122,7 @@ export interface WordMapping {
 export interface GroupConfig {
   name: string;
   textColumn: number;
+  minScoreThreshold: number;
   file?: File;
 }
 
@@ -133,7 +140,16 @@ export interface AnalysisConfig {
 
 // ============= UI State Types =============
 
-export type LayoutType = 'force' | 'clustered';
+export type LayoutType = 'force' | 'clustered' | 'hierarchical' | 'circular' | 'radial';
+
+// Node size metric options (also allows dynamic per-group keys like 'group_a_normalized')
+export type NodeSizeMetric = 'avg_normalized' | 'betweenness' | 'closeness' | 'eigenvector' | 'degree' | 'strength' | 'pagerank' | 'harmonic' | 'kcore' | string;
+
+// Node color metric options
+export type NodeColorMetric = 'emphasis' | 'cluster' | 'betweenness_gradient' | 'pagerank_gradient' | 'kcore_gradient' | string;
+
+// Edge type filter
+export type EdgeTypeFilter = 'all' | 'cooccurrence' | 'semantic';
 
 // Filter types - dynamic group filters use group_key pattern
 export type FilterType =
@@ -157,6 +173,12 @@ export interface FilterState {
 export interface VisualizationState {
   layout: LayoutType;
   colorMode: ColorMode;
+  nodeSizeMetric: NodeSizeMetric;
+  nodeColorMetric: NodeColorMetric;
+  edgeTypeFilter: EdgeTypeFilter;
+  showClusterHulls: boolean;
+  nodeSpread: number;
+  labelScale: number;
 }
 
 // ============= Component Props Types =============
@@ -175,7 +197,13 @@ export interface NetworkGraphProps {
   visualizationState: VisualizationState;
   groupNames: string[];
   groupKeys: string[];
+  highlightedNode?: string | null;
   onNodeClick?: (word: string) => void;
+  onNodeRightClick?: (word: string, x: number, y: number) => void;
+  focusedCluster?: { groupKey: string; cluster: number } | null;
+  pathNodes?: string[];
+  egoCenter?: string | null;
+  selectedNodes?: Set<string>;
 }
 
 export interface DataTableProps {
@@ -185,6 +213,10 @@ export interface DataTableProps {
   groupKeys: string[];
   onToggleVisibility: (word: string) => void;
   onSearch: (query: string) => void;
+  highlightedNode?: string | null;
+  onNodeClick?: (word: string) => void;
+  onFocusCluster?: (groupKey: string, cluster: number) => void;
+  onClearHidden?: () => void;
 }
 
 export interface ControlPanelProps {
@@ -194,9 +226,16 @@ export interface ControlPanelProps {
   groupKeys: string[];
   onFilterChange: (filter: Partial<FilterState>) => void;
   onVisualizationChange: (viz: Partial<VisualizationState>) => void;
-  onApply: () => void;
-  onExport: () => void;
+  onExport: (format?: string) => void;
   onSave?: () => void;
+  focusedCluster?: { groupKey: string; cluster: number } | null;
+  onClearFocus?: () => void;
+  nodes?: ComparisonNode[];
+  egoNode?: string | null;
+  egoHops?: number;
+  onEgoNodeChange?: (word: string | null) => void;
+  onEgoHopsChange?: (hops: number) => void;
+  onClearEgo?: () => void;
 }
 
 // ============= Subscription Types =============
@@ -212,7 +251,7 @@ export interface TierLimits {
   chat_enabled: boolean;
   chat_messages_per_month: number | null;
   export_enabled: boolean;
-  save_analyses_days: number;
+  save_analyses_days: number | null;
   api_access: boolean;
 }
 

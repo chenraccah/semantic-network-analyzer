@@ -3,7 +3,7 @@ API routes for the semantic network analyzer.
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import pandas as pd
@@ -14,6 +14,8 @@ import time
 
 from core import TextProcessor, NetworkBuilder, ComparisonAnalyzer, MultiGroupAnalyzer, get_semantic_analyzer, get_chat_service
 from core.config import settings
+from core.export_service import export_excel, export_json, export_graphml, export_gexf
+from core.cache_service import get_cached, set_cached, hash_content
 from core.auth import get_current_user, TokenData
 from core.tier_limits import get_tier_limits, TIER_LIMITS, TIER_PRICING
 from core.supabase_client import (
@@ -316,6 +318,7 @@ async def analyze_multi_group(
     delete_words: str = Form("[]"),
     use_semantic: str = Form("false"),
     semantic_threshold: float = Form(0.5),
+    unify_plurals: str = Form("true"),
     file_0: UploadFile = File(None),
     file_1: UploadFile = File(None),
     file_2: UploadFile = File(None),
@@ -348,6 +351,7 @@ async def analyze_multi_group(
         mappings = json.loads(word_mappings)
         deletions = json.loads(delete_words)
         use_semantic_bool = use_semantic.lower() == "true"
+        unify_plurals_bool = unify_plurals.lower() == "true"
 
         # ============================================================
         # USAGE LIMIT CHECKS
@@ -421,12 +425,36 @@ async def analyze_multi_group(
         if len(files) == 0:
             raise HTTPException(status_code=400, detail="At least one file is required")
 
-        # Check file sizes against tier limit
+        # Read file contents for size checks and cache keys
+        file_contents = []
+        file_hashes = []
         for i, file in enumerate(files):
-            # Read file to check size
             content = await file.read()
+            file_contents.append(content)
+            file_hashes.append(hash_content(content))
+            await file.seek(0)
+
+        # Check cache
+        cache_config = {
+            "group_configs": configs,
+            "min_frequency": min_frequency,
+            "min_score_threshold": min_score_threshold,
+            "cluster_method": cluster_method,
+            "word_mappings": mappings,
+            "delete_words": deletions,
+            "use_semantic": use_semantic_bool,
+            "semantic_threshold": semantic_threshold,
+            "unify_plurals": unify_plurals_bool,
+        }
+        cached_result = get_cached(file_hashes, cache_config)
+        if cached_result is not None:
+            # Increment usage counter even for cached results
+            await increment_analysis_count(current_user.user_id)
+            return cached_result
+
+        # Check file sizes against tier limit
+        for i, content in enumerate(file_contents):
             file_size = len(content)
-            await file.seek(0)  # Reset file position
 
             if file_size > max_file_size:
                 raise HTTPException(
@@ -440,6 +468,10 @@ async def analyze_multi_group(
                         "file_size_mb": round(file_size / (1024 * 1024), 2)
                     }
                 )
+
+        # Reset file positions after content reads
+        for file in files:
+            await file.seek(0)
 
         # Read texts from all files
         t1 = time.time()
@@ -478,12 +510,18 @@ async def analyze_multi_group(
                 }
             )
 
+        # Extract per-group min score thresholds (fallback to global)
+        per_group_thresholds = []
+        for config in configs:
+            threshold = config.get('min_score_threshold', min_score_threshold)
+            per_group_thresholds.append(float(threshold))
+
         # Create multi-group analyzer
         analyzer = MultiGroupAnalyzer(
             group_names=group_names,
             word_mappings=mappings,
             delete_words=set(deletions),
-            unify_plurals=True
+            unify_plurals=unify_plurals_bool
         )
 
         # Run analysis
@@ -492,6 +530,7 @@ async def analyze_multi_group(
             texts_list=texts_list,
             min_frequency=min_frequency,
             min_score_threshold=min_score_threshold,
+            per_group_thresholds=per_group_thresholds,
             cluster_method=cluster_method
         )
         print(f"[TIMING] Co-occurrence analysis: {time.time() - t2:.2f}s")
@@ -525,7 +564,7 @@ async def analyze_multi_group(
             "processing_time": round(total_time, 2)
         })
 
-        return {
+        response_data = {
             "success": True,
             **results,
             **num_texts,
@@ -533,6 +572,11 @@ async def analyze_multi_group(
             "semantic_edges_added": semantic_edges_added,
             "processing_time": round(total_time, 2)
         }
+
+        # Store in cache
+        set_cached(file_hashes, cache_config, response_data)
+
+        return response_data
 
     except HTTPException:
         # Re-raise HTTP exceptions (including limit errors)
@@ -872,6 +916,75 @@ async def check_export(
 
 
 # ============================================================
+# EXPORT ENDPOINT
+# ============================================================
+
+class ExportRequest(BaseModel):
+    """Request model for exporting analysis data."""
+    format: str
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    stats: Dict[str, Any]
+    group_names: List[str]
+    group_keys: List[str]
+
+
+@router.post("/export")
+async def export_analysis(
+    request: ExportRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Export analysis data in various formats (Pro+ feature).
+    Supported formats: excel, json, graphml, gexf
+    """
+    # Check export access
+    export_check = await check_export_enabled(current_user.user_id)
+    if not export_check.get("allowed"):
+        raise HTTPException(
+            status_code=403,
+            detail=export_check.get("message", "Export requires a Pro subscription")
+        )
+
+    fmt = request.format.lower()
+    try:
+        if fmt == "excel":
+            data = export_excel(request.nodes, request.edges, request.stats, request.group_names, request.group_keys)
+            return Response(
+                content=data,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=analysis.xlsx"}
+            )
+        elif fmt == "json":
+            data = export_json(request.nodes, request.edges, request.stats, request.group_names, request.group_keys)
+            return Response(
+                content=data,
+                media_type="application/json",
+                headers={"Content-Disposition": "attachment; filename=analysis.json"}
+            )
+        elif fmt == "graphml":
+            data = export_graphml(request.nodes, request.edges, request.stats, request.group_names, request.group_keys)
+            return Response(
+                content=data,
+                media_type="application/xml",
+                headers={"Content-Disposition": "attachment; filename=analysis.graphml"}
+            )
+        elif fmt == "gexf":
+            data = export_gexf(request.nodes, request.edges, request.stats, request.group_names, request.group_keys)
+            return Response(
+                content=data,
+                media_type="application/xml",
+                headers={"Content-Disposition": "attachment; filename=analysis.gexf"}
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}. Use excel, json, graphml, or gexf.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+# ============================================================
 # BILLING ENDPOINTS
 # ============================================================
 
@@ -1136,3 +1249,107 @@ async def check_save_access(
     Check if user can save analyses.
     """
     return await check_save_enabled(current_user.user_id)
+
+
+# ============================================================
+# GRAPH ALGORITHM ENDPOINTS
+# ============================================================
+
+class ShortestPathRequest(BaseModel):
+    """Request model for shortest path computation."""
+    source: str
+    target: str
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+
+
+class EgoNetworkRequest(BaseModel):
+    """Request model for ego network extraction."""
+    center_word: str
+    hops: int = 1
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+
+
+@router.post("/shortest-path")
+async def compute_shortest_path(
+    request: ShortestPathRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Compute shortest path between two nodes using Dijkstra's algorithm.
+    """
+    import networkx as nx
+
+    G = nx.Graph()
+    for edge in request.edges:
+        w = edge.get('weight', 1)
+        # Invert weight for Dijkstra (higher weight = shorter distance)
+        G.add_edge(edge['from'], edge['to'], weight=1.0 / max(w, 1))
+
+    if request.source not in G or request.target not in G:
+        raise HTTPException(status_code=400, detail="Source or target node not found in graph")
+
+    try:
+        path = nx.dijkstra_path(G, request.source, request.target, weight='weight')
+        length = nx.dijkstra_path_length(G, request.source, request.target, weight='weight')
+        return {
+            "success": True,
+            "path": path,
+            "length": round(length, 4),
+            "hops": len(path) - 1
+        }
+    except nx.NetworkXNoPath:
+        return {
+            "success": False,
+            "error": f"No path exists between '{request.source}' and '{request.target}'"
+        }
+
+
+@router.post("/ego-network")
+async def compute_ego_network(
+    request: EgoNetworkRequest,
+    current_user: TokenData = Depends(get_current_user)
+):
+    """
+    Extract ego-network (subgraph) around a center node up to N hops.
+    """
+    import networkx as nx
+
+    G = nx.Graph()
+    for edge in request.edges:
+        G.add_edge(edge['from'], edge['to'], weight=edge.get('weight', 1))
+
+    if request.center_word not in G:
+        raise HTTPException(status_code=400, detail=f"Node '{request.center_word}' not found in graph")
+
+    hops = max(1, min(request.hops, 3))
+
+    # BFS to find nodes within N hops
+    ego_nodes = set()
+    current_layer = {request.center_word}
+    for _ in range(hops):
+        next_layer = set()
+        for node in current_layer:
+            for neighbor in G.neighbors(node):
+                if neighbor not in ego_nodes and neighbor != request.center_word:
+                    next_layer.add(neighbor)
+        ego_nodes.update(current_layer)
+        current_layer = next_layer
+    ego_nodes.update(current_layer)
+
+    # Filter edges to ego subgraph
+    ego_edges = [
+        e for e in request.edges
+        if e['from'] in ego_nodes and e['to'] in ego_nodes
+    ]
+
+    return {
+        "success": True,
+        "center": request.center_word,
+        "hops": hops,
+        "ego_nodes": list(ego_nodes),
+        "ego_edges": ego_edges,
+        "num_nodes": len(ego_nodes),
+        "num_edges": len(ego_edges)
+    }

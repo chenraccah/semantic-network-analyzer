@@ -20,12 +20,13 @@ from core import preload_model
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Startup: preload embedding model
-    print("Preloading embedding model...")
-    preload_model()
-    print("Model preloaded successfully")
+    if settings.PRELOAD_MODEL:
+        print("Preloading embedding model...")
+        preload_model()
+        print("Model preloaded successfully")
+    else:
+        print("Skipping model preload (PRELOAD_MODEL=False)")
     yield
-    # Shutdown: cleanup if needed
     print("Shutting down...")
 
 # Create FastAPI app

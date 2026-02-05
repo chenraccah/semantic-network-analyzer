@@ -177,12 +177,14 @@ export function AnalysisHistory({ onLoad, onClose }: AnalysisHistoryProps) {
                       </h3>
                       <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
                         <span>{formatDate(analysis.created_at)}</span>
-                        {analysis.expires_at && (
+                        {analysis.expires_at && tier !== 'enterprise' ? (
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {getExpiresIn(analysis.expires_at)}
                           </span>
-                        )}
+                        ) : !analysis.expires_at || tier === 'enterprise' ? (
+                          <span className="text-green-600 text-xs font-medium">Saved forever</span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
@@ -222,7 +224,7 @@ export function AnalysisHistory({ onLoad, onClose }: AnalysisHistoryProps) {
         {canSave && analyses.length > 0 && (
           <div className="px-6 py-3 border-t bg-gray-50 text-center text-sm text-gray-500">
             {tier === 'pro' && 'Analyses are saved for 7 days'}
-            {tier === 'enterprise' && 'Analyses are saved for 90 days'}
+            {tier === 'enterprise' && 'Analyses are saved forever'}
           </div>
         )}
       </div>

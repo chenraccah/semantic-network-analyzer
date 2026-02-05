@@ -73,6 +73,7 @@ class MultiGroupAnalyzer:
         texts_list: List[List[str]],
         min_frequency: int = 1,
         min_score_threshold: float = 2.0,
+        per_group_thresholds: List[float] = None,
         cluster_method: str = 'louvain'
     ) -> Dict:
         """
@@ -81,7 +82,8 @@ class MultiGroupAnalyzer:
         Args:
             texts_list: List of text lists, one per group
             min_frequency: Minimum word frequency
-            min_score_threshold: Minimum normalized score (%) to include
+            min_score_threshold: Global minimum normalized score (%) fallback
+            per_group_thresholds: Per-group minimum scores; if provided, overrides global
             cluster_method: Clustering method
 
         Returns:
@@ -90,6 +92,10 @@ class MultiGroupAnalyzer:
         if len(texts_list) != self.num_groups:
             raise ValueError(f"Expected {self.num_groups} text lists, got {len(texts_list)}")
 
+        # Build per-group thresholds list (fallback to global)
+        thresholds = per_group_thresholds if per_group_thresholds and len(per_group_thresholds) == self.num_groups \
+            else [min_score_threshold] * self.num_groups
+
         # Build networks for each group
         for i, texts in enumerate(texts_list):
             self.builders[i].build_network(texts, min_frequency=min_frequency)
@@ -97,11 +103,14 @@ class MultiGroupAnalyzer:
         # Calculate metrics and clusters for each group
         all_metrics = []
         all_clusters = []
+        all_advanced = []
         for builder in self.builders:
             metrics = builder.calculate_centrality_metrics()
             clusters = builder.detect_clusters(method=cluster_method)
+            advanced = builder.calculate_advanced_metrics()
             all_metrics.append(metrics)
             all_clusters.append(clusters)
+            all_advanced.append(advanced)
 
         # Get all words from all groups
         all_words = set()
@@ -127,8 +136,8 @@ class MultiGroupAnalyzer:
                 counts.append(count)
                 norms.append(norm)
 
-            # Check threshold - include if any group meets it
-            if all(n < min_score_threshold for n in norms):
+            # Check threshold - include if any group meets its threshold
+            if all(norms[i] < thresholds[i] for i in range(self.num_groups)):
                 continue
 
             # Build data row with dynamic keys
@@ -146,6 +155,12 @@ class MultiGroupAnalyzer:
                 row[f'{key}_betweenness'] = round(m.get('betweenness', 0), 3)
                 row[f'{key}_closeness'] = round(m.get('closeness', 0), 3)
                 row[f'{key}_eigenvector'] = round(m.get('eigenvector', 0), 3)
+
+                adv = all_advanced[i].get(word, {})
+                row[f'{key}_pagerank'] = adv.get('pagerank', 0)
+                row[f'{key}_harmonic'] = adv.get('harmonic', 0)
+                row[f'{key}_kcore'] = adv.get('kcore', 0)
+                row[f'{key}_constraint'] = adv.get('constraint', 0)
 
             # Add computed fields
             row['avg_normalized'] = round(sum(norms) / len(norms), 2)
@@ -186,6 +201,21 @@ class MultiGroupAnalyzer:
         for i, key in enumerate(self.group_keys):
             stats[f'{key}_total'] = len([d for d in self.analysis_data if d[f'{key}_count'] > 0])
             stats[f'{key}_clusters'] = len(set(all_clusters[i].values()))
+
+            # Per-group network stats
+            group_stats = self.builders[i].get_network_stats()
+            stats[f'{key}_density'] = group_stats.get('density', 0)
+            stats[f'{key}_modularity'] = group_stats.get('modularity', 0)
+            stats[f'{key}_clustering_coefficient'] = group_stats.get('clustering_coefficient', 0)
+            stats[f'{key}_avg_path_length'] = group_stats.get('avg_path_length', 0)
+            stats[f'{key}_diameter'] = group_stats.get('diameter', 0)
+
+            # Per-group structural stats
+            structural = self.builders[i].get_structural_stats()
+            stats[f'{key}_num_bridges'] = structural.get('num_bridges', 0)
+            stats[f'{key}_num_articulation_points'] = structural.get('num_articulation_points', 0)
+            stats[f'{key}_assortativity'] = structural.get('assortativity', 0)
+            stats[f'{key}_articulation_points'] = structural.get('articulation_points', [])
 
         return {
             'analysis_data': self.analysis_data,

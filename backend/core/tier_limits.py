@@ -38,7 +38,7 @@ TIER_LIMITS: Dict[str, Dict[str, Any]] = {
         "chat_enabled": True,
         "chat_messages_per_month": None,  # Unlimited
         "export_enabled": True,
-        "save_analyses_days": 90,
+        "save_analyses_days": None,  # None = saved forever
         "api_access": True,
     }
 }

@@ -158,7 +158,9 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   }, [limits]);
 
   const canSaveAnalyses = useCallback((): boolean => {
-    return (limits?.save_analyses_days ?? 0) > 0;
+    const days = limits?.save_analyses_days;
+    // null = saved forever (enterprise), > 0 = N days (pro), 0 = disabled (free)
+    return days === null || (days !== undefined && days > 0);
   }, [limits]);
 
   const getMaxGroups = useCallback((): number => {
