@@ -228,13 +228,14 @@ class NetworkBuilder:
 
         return stats
     
-    def detect_clusters(self, method: str = 'louvain', n_clusters: int = 5) -> Dict[str, int]:
+    def detect_clusters(self, method: str = 'louvain', n_clusters: int = 5, resolution: float = 1.0) -> Dict[str, int]:
         """
         Detect clusters/communities in the network.
 
         Args:
-            method: Clustering method ('louvain', 'spectral', 'modularity')
+            method: Clustering method ('louvain', 'spectral')
             n_clusters: Number of clusters for spectral clustering
+            resolution: Resolution parameter for Louvain (higher = more clusters)
 
         Returns:
             Dictionary mapping nodes to cluster IDs
@@ -242,12 +243,29 @@ class NetworkBuilder:
         if not self.graph or len(self.graph.nodes()) == 0:
             return {}
 
+        # Need at least one edge for meaningful clustering
+        if len(self.graph.edges()) == 0:
+            # All nodes in separate clusters if no edges
+            return {node: i for i, node in enumerate(self.graph.nodes())}
+
         if method == 'louvain':
             try:
-                partition = community_louvain.best_partition(self.graph, weight='weight')
+                # Use fixed random_state for reproducibility
+                partition = community_louvain.best_partition(
+                    self.graph,
+                    weight='weight',
+                    resolution=resolution,
+                    random_state=42
+                )
                 self.last_partition = partition
+
+                # Log cluster info
+                num_clusters = len(set(partition.values()))
+                print(f"[LOUVAIN] Graph: {self.graph.number_of_nodes()} nodes, {self.graph.number_of_edges()} edges -> {num_clusters} clusters")
+
                 return partition
-            except Exception:
+            except Exception as e:
+                print(f"[LOUVAIN ERROR] {e}")
                 partition = {node: 0 for node in self.graph.nodes()}
                 self.last_partition = partition
                 return partition

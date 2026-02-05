@@ -4,15 +4,28 @@
 
 import type { ComparisonNode, FilterState, ColorMode, NodeSizeMetric, NodeColorMetric, EdgeTypeFilter, NetworkEdge } from '../types';
 
-// Cluster colors
+// Cluster colors (20 distinct colors for up to 20 clusters)
 export const CLUSTER_COLORS = [
-  '#e74c3c',
-  '#3498db',
-  '#2ecc71',
-  '#f39c12',
-  '#9b59b6',
-  '#1abc9c',
-  '#34495e',
+  '#e74c3c',  // Red
+  '#3498db',  // Blue
+  '#2ecc71',  // Green
+  '#f39c12',  // Orange
+  '#9b59b6',  // Purple
+  '#1abc9c',  // Teal
+  '#34495e',  // Dark Gray
+  '#e91e63',  // Pink
+  '#00bcd4',  // Cyan
+  '#8bc34a',  // Light Green
+  '#ff5722',  // Deep Orange
+  '#673ab7',  // Deep Purple
+  '#009688',  // Teal Dark
+  '#ffc107',  // Amber
+  '#795548',  // Brown
+  '#607d8b',  // Blue Gray
+  '#cddc39',  // Lime
+  '#03a9f4',  // Light Blue
+  '#ff9800',  // Orange
+  '#4caf50',  // Green
 ];
 
 // Emphasis colors
