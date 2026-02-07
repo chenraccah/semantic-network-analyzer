@@ -561,7 +561,7 @@ function App() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {/* Landing Page - Post Login */}
-        {showLanding && !analysisResult && (
+        {showLanding && (
           <div className="py-12">
             {/* Welcome Section */}
             <div className="text-center max-w-3xl mx-auto mb-12">
@@ -623,18 +623,36 @@ function App() {
             </div>
 
             {/* CTA */}
-            <div className="text-center">
+            <div className="text-center flex flex-wrap justify-center gap-4">
+              {analysisResult && (
+                <button
+                  onClick={() => setShowLanding(false)}
+                  className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-primary-500 to-purple-600 text-white rounded-xl font-semibold text-lg hover:from-primary-600 hover:to-purple-700 transition-all shadow-lg shadow-primary-500/25"
+                >
+                  <BarChart3 className="w-5 h-5" />
+                  Continue Current Analysis
+                </button>
+              )}
               <button
-                onClick={() => setShowLanding(false)}
-                className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-primary-500 to-purple-600 text-white rounded-xl font-semibold text-lg hover:from-primary-600 hover:to-purple-700 transition-all shadow-lg shadow-primary-500/25"
+                onClick={() => {
+                  setShowLanding(false);
+                  if (analysisResult) {
+                    setAnalysisResult(null);
+                  }
+                }}
+                className={`inline-flex items-center gap-3 px-10 py-4 rounded-xl font-semibold text-lg transition-all ${
+                  analysisResult
+                    ? 'border-2 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                    : 'bg-gradient-to-r from-primary-500 to-purple-600 text-white hover:from-primary-600 hover:to-purple-700 shadow-lg shadow-primary-500/25'
+                }`}
               >
                 <FileUp className="w-5 h-5" />
-                Start New Analysis
+                {analysisResult ? 'Start New Analysis' : 'Start New Analysis'}
               </button>
               {canSaveAnalyses() && (
                 <button
                   onClick={() => setShowHistory(true)}
-                  className="ml-4 inline-flex items-center gap-2 px-6 py-4 border-2 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-4 border-2 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
                   Load Previous Analysis
                 </button>
@@ -765,7 +783,7 @@ function App() {
         )}
 
         {/* Config Section — collapsible, shown when results exist */}
-        {analysisResult && (
+        {analysisResult && !showLanding && (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
             <button
               onClick={() => setConfigCollapsed(!configCollapsed)}
@@ -841,7 +859,7 @@ function App() {
         )}
 
         {/* Results Section */}
-        {analysisResult && !isAnalyzing && (
+        {analysisResult && !isAnalyzing && !showLanding && (
           <div className="space-y-6">
             {/* Stats Summary */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
