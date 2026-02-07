@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Moon, Sun, ChevronDown, ChevronUp, Upload, Network, FileUp, Settings, Sparkles, BarChart3, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Upload, Network, FileUp, Settings, Sparkles, BarChart3, CheckCircle2 } from 'lucide-react';
 import { FileUpload } from './components/FileUpload';
 import { ConfigPanel } from './components/ConfigPanel';
 import { NetworkGraph } from './components/NetworkGraph';
@@ -19,7 +19,6 @@ import { NodeComparisonPanel } from './components/NodeComparisonPanel';
 import { useAuth } from './contexts/AuthContext';
 import { useSubscription } from './contexts/SubscriptionContext';
 import { useToast } from './contexts/ToastContext';
-import { useTheme } from './contexts/ThemeContext';
 import { analyzeMultiGroup, saveAnalysis, exportAnalysis } from './utils/api';
 import { exportToCSV, downloadCSV } from './utils/network';
 import { computeEgoNetwork, computeShortestPath, getNeighbors } from './utils/graphAlgorithms';
@@ -82,7 +81,6 @@ function App() {
     loading: subscriptionLoading
   } = useSubscription();
   const { addToast } = useToast();
-  const { theme, toggleTheme } = useTheme();
 
   // File state
   const [files, setFiles] = useState<(File | null)[]>([null]);
@@ -510,24 +508,17 @@ function App() {
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start gap-4">
           <button
             onClick={() => setShowLanding(true)}
-            className="text-left hover:opacity-90 transition-opacity"
+            className="flex items-center gap-3 hover:opacity-90 transition-opacity"
           >
-            <h1 className="text-3xl font-bold">Semantic Network Analyzer</h1>
-            <p className="mt-2 text-primary-100">
-              Compare and visualize semantic patterns between groups
-            </p>
+            <Network className="w-10 h-10 text-white" />
+            <div className="text-left">
+              <h1 className="text-2xl font-bold">SNA</h1>
+              <p className="text-sm text-primary-100">Semantic Network Analyzer</p>
+            </div>
           </button>
           <div className="flex flex-wrap items-center gap-4">
             <UsageBanner />
             <span className="text-sm text-primary-100">{user.email}</span>
-            {/* Dark mode toggle */}
-            <button
-              onClick={toggleTheme}
-              className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
-              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
             <button
               onClick={() => {
                 if (subscriptionLoading) return;

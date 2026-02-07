@@ -4,26 +4,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="light" />
     <title>Semantic Network Analyzer</title>
-    <script>
-      // Apply dark mode before first paint to prevent flash
-      (function() {
-        var t = localStorage.getItem('theme');
-        var dark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
-        if (dark) {
-          document.documentElement.classList.add('dark');
-          document.documentElement.style.colorScheme = 'dark';
-          document.documentElement.style.backgroundColor = '#111827';
-        } else {
-          document.documentElement.style.colorScheme = 'light';
-          document.documentElement.style.backgroundColor = '#ffffff';
-        }
-        // Update meta tag to lock the scheme so browser doesn't override
-        var meta = document.querySelector('meta[name="color-scheme"]');
-        if (meta) meta.setAttribute('content', dark ? 'dark' : 'light');
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>

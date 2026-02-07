@@ -2,7 +2,6 @@ import { useEffect, useRef, useMemo, useState, useImperativeHandle, forwardRef }
 import { Network } from 'vis-network';
 import { DataSet } from 'vis-data';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useTheme } from '../contexts/ThemeContext';
 import type { NetworkGraphProps } from '../types';
 import {
   filterNodes,
@@ -38,12 +37,10 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
   const [legendExpanded, setLegendExpanded] = useState(true);
-  const { theme } = useTheme();
 
   const numGroups = groupNames.length;
-  const isDark = theme === 'dark';
-  const fontColor = isDark ? '#e5e7eb' : '#000000';
-  const edgeColor = isDark ? '#555' : '#999';
+  const fontColor = '#000000';
+  const edgeColor = '#999';
 
   const pathNodeSet = useMemo(() => new Set(pathNodes || []), [pathNodes]);
 
@@ -112,7 +109,7 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
       const isEgoCenter = egoCenter === node.word;
       const isSelected = selectedNodes?.has(node.word);
 
-      let borderColor = isDark ? '#888' : '#666';
+      let borderColor = '#666';
       let borderWidth = 2;
       if (isHighlighted || isSelected) { borderColor = '#FFD700'; borderWidth = 4; }
       if (isOnPath) { borderColor = '#FFD700'; borderWidth = 3; }
@@ -141,7 +138,7 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         ...(pos ? { x: pos.x, y: pos.y } : {}),
       };
     });
-  }, [filteredNodes, visualizationState, groupNames, groupKeys, numGroups, highlightedNode, isDark, fontColor, pathNodeSet, egoCenter, selectedNodes, precomputedPositions]);
+  }, [filteredNodes, visualizationState, groupNames, groupKeys, numGroups, highlightedNode, fontColor, pathNodeSet, egoCenter, selectedNodes, precomputedPositions]);
 
   const visEdges = useMemo(() => {
     return filteredEdges.map(edge => {
@@ -162,7 +159,7 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         color: {
           color: isPathEdge ? '#FFD700' : edgeColor,
           opacity: isPathEdge ? 0.8 : 0.15,
-          highlight: isDark ? '#aaa' : '#666',
+          highlight: '#666',
         },
         width: isPathEdge ? 4 : Math.max(1, Math.min(5, edge.weight / 10)),
         smooth: { type: 'continuous' as const, roundness: 0.2 },
@@ -170,7 +167,7 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         title: tooltipText,
       };
     });
-  }, [filteredEdges, edgeColor, isDark, pathNodeSet, pathNodes]);
+  }, [filteredEdges, edgeColor, pathNodeSet, pathNodes]);
 
   // Expose export function via ref
   useImperativeHandle(ref, () => ({

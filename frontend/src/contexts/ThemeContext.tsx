@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useLayoutEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext } from 'react';
 
-type Theme = 'light' | 'dark';
+type Theme = 'light';
 
 interface ThemeContextType {
   theme: Theme;
@@ -10,62 +10,22 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-function getInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'light';
-  const stored = localStorage.getItem('theme') as Theme | null;
-  if (stored === 'light' || stored === 'dark') return stored;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-/** Apply theme to DOM immediately — can be called outside of React lifecycle */
-function applyThemeToDOM(theme: Theme) {
+// Always light mode - ensure DOM is set correctly
+if (typeof window !== 'undefined') {
   const root = document.documentElement;
   const body = document.body;
-
-  // Toggle class on both html and body
-  root.classList.toggle('dark', theme === 'dark');
-  body.classList.toggle('dark', theme === 'dark');
-  root.setAttribute('data-theme', theme);
-
-  // Force the browser's color scheme to match our choice.
-  // This prevents the browser / OS dark mode from overriding.
-  root.style.colorScheme = theme;
-  root.style.backgroundColor = theme === 'dark' ? '#111827' : '#ffffff';
-  body.style.backgroundColor = theme === 'dark' ? '#111827' : '';
-
-  // Update <meta name="color-scheme"> to lock the browser into our chosen scheme
-  const meta = document.querySelector('meta[name="color-scheme"]');
-  if (meta) {
-    meta.setAttribute('content', theme);
-  }
-
-  localStorage.setItem('theme', theme);
+  root.classList.remove('dark');
+  body.classList.remove('dark');
+  root.style.colorScheme = 'light';
+  root.style.backgroundColor = '#ffffff';
+  body.style.backgroundColor = '';
+  localStorage.removeItem('theme');
 }
 
-// Apply initial theme immediately (before React renders)
-applyThemeToDOM(getInitialTheme());
-
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
-
-  // Sync DOM on every theme change — useLayoutEffect ensures
-  // changes are committed before the browser paints
-  useLayoutEffect(() => {
-    applyThemeToDOM(theme);
-  }, [theme]);
-
-  const setTheme = useCallback((t: Theme) => {
-    applyThemeToDOM(t);
-    setThemeState(t);
-  }, []);
-
-  const toggleTheme = useCallback(() => {
-    setThemeState(prev => {
-      const next = prev === 'light' ? 'dark' : 'light';
-      applyThemeToDOM(next);
-      return next;
-    });
-  }, []);
+  const theme: Theme = 'light';
+  const toggleTheme = () => {}; // No-op
+  const setTheme = () => {}; // No-op
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
