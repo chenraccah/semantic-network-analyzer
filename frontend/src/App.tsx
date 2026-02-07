@@ -508,12 +508,15 @@ function App() {
       {/* Header */}
       <header className="bg-gradient-to-r from-primary-500 to-purple-600 text-white py-6 px-4">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start gap-4">
-          <div>
+          <button
+            onClick={() => setShowLanding(true)}
+            className="text-left hover:opacity-90 transition-opacity"
+          >
             <h1 className="text-3xl font-bold">Semantic Network Analyzer</h1>
             <p className="mt-2 text-primary-100">
               Compare and visualize semantic patterns between groups
             </p>
-          </div>
+          </button>
           <div className="flex flex-wrap items-center gap-4">
             <UsageBanner />
             <span className="text-sm text-primary-100">{user.email}</span>
