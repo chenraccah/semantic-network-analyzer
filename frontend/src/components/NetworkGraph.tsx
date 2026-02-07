@@ -116,13 +116,18 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
       if (isEgoCenter) { borderColor = '#00BFFF'; borderWidth = 4; }
 
       const rawPos = precomputedPositions?.get(node.word);
-      const spread = visualizationState.nodeSpread ?? 1.0;
+      // Make slider 10x more influential with exponential scaling
+      const rawSpread = visualizationState.nodeSpread ?? 1.0;
+      const spread = Math.pow(rawSpread, 3.3);
       const pos = rawPos ? { x: rawPos.x * spread, y: rawPos.y * spread } : undefined;
+
+      const finalSize = (isHighlighted || isEgoCenter) ? size * 1.5 : size;
+      const finalFontSize = isHighlighted ? fontSize * 1.3 : fontSize;
 
       return {
         id: node.word,
         label: node.word,
-        size: (isHighlighted || isEgoCenter) ? size * 1.5 : size,
+        size: finalSize,
         color: {
           background: color,
           border: borderColor,
@@ -130,9 +135,12 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         },
         borderWidth,
         font: {
-          size: isHighlighted ? fontSize * 1.3 : fontSize,
+          size: finalFontSize,
           color: fontColor,
           face: 'Arial',
+          vadjust: -finalSize * 1.05,  // Center label on node
+          multi: 'html',  // Enable word wrapping
+          maxWdt: finalSize * 1.8,  // Max width before wrapping (allows overflow)
         },
         title: tooltipHtml,
         ...(pos ? { x: pos.x, y: pos.y } : {}),
@@ -204,7 +212,7 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
 
     const options: any = {
       nodes: {
-        shape: 'dot',
+        shape: 'dot',  // Fixed size circle
         borderWidth: 2,
         borderWidthSelected: 3,
       },
@@ -244,16 +252,18 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         options.physics = { enabled: false };
       }
     } else if (usePhysics) {
-      const spread = visualizationState.nodeSpread ?? 1.0;
+      // Make slider 10x more influential: 0.5→0.05, 1.0→1.0, 2.0→100
+      const rawSpread = visualizationState.nodeSpread ?? 1.0;
+      const spread = Math.pow(rawSpread, 3.3); // Exponential scaling for 10x effect
       options.physics = {
         enabled: true,
         stabilization: { iterations: 150, updateInterval: 25 },
         barnesHut: {
-          gravitationalConstant: -5000 * spread,
-          centralGravity: 0.05 / spread,
-          springLength: 250 * spread,
-          springConstant: 0.02,
-          damping: 0.15,
+          gravitationalConstant: -8000 * spread,  // Stronger repulsion for more spread
+          centralGravity: 0.02 / spread,          // Weaker central pull
+          springLength: 350 * spread,             // Longer springs = more edge spread
+          springConstant: 0.015,                  // Slightly weaker springs
+          damping: 0.12,
           avoidOverlap: 1,
         },
       };

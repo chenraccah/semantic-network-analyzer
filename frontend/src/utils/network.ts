@@ -105,8 +105,9 @@ export function getNodeSize(
   _groupKeys: string[] = [],
   sizeMetric?: NodeSizeMetric
 ): number {
-  const MIN_SIZE = 30;
-  const MAX_SIZE = 80;
+  // Wider range for more noticeable differential sizing
+  const MIN_SIZE = 12;
+  const MAX_SIZE = 140;
 
   if (sizeMetric && sizeMetric !== 'avg_normalized') {
     // Per-group normalized score (e.g. "group_a_normalized")
