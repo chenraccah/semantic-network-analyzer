@@ -149,6 +149,9 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
   }, [filteredNodes, visualizationState, groupNames, groupKeys, numGroups, highlightedNode, fontColor, pathNodeSet, egoCenter, selectedNodes, precomputedPositions]);
 
   const visEdges = useMemo(() => {
+    // Calculate max weight for Euclidean distance normalization
+    const maxWeight = Math.max(...filteredEdges.map(e => e.weight), 1);
+
     return filteredEdges.map(edge => {
       const isSemantic = edge.edge_type === 'semantic';
       const isPathEdge = pathNodeSet.has(edge.from) && pathNodeSet.has(edge.to) && pathNodes &&
@@ -160,10 +163,15 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         tooltipText += `\nSemantic: ${edge.semantic_similarity.toFixed(3)}`;
       }
 
+      // Euclidean distance: higher weight = shorter distance (closer nodes)
+      const normalizedWeight = edge.weight / maxWeight;
+      const edgeLength = 50 + (1 - normalizedWeight) * 300;  // Range: 50-350
+
       return {
         from: edge.from,
         to: edge.to,
         value: edge.weight,
+        length: edgeLength,  // Euclidean distance based on weight
         color: {
           color: isPathEdge ? '#FFD700' : edgeColor,
           opacity: isPathEdge ? 0.8 : 0.15,
@@ -261,11 +269,16 @@ export const NetworkGraph = forwardRef<NetworkGraphHandle, NetworkGraphProps>(fu
         barnesHut: {
           gravitationalConstant: -8000 * spread,  // Stronger repulsion for more spread
           centralGravity: 0.02 / spread,          // Weaker central pull
-          springLength: 350 * spread,             // Longer springs = more edge spread
-          springConstant: 0.015,                  // Slightly weaker springs
+          springLength: 200 * spread,             // Base spring length (per-edge length overrides)
+          springConstant: 0.04,                   // Stronger springs for Euclidean positioning
           damping: 0.12,
           avoidOverlap: 1,
         },
+      };
+      // Use per-edge length for Euclidean distance
+      options.edges = {
+        ...options.edges,
+        smooth: { enabled: true, type: 'continuous', roundness: 0.2 },
       };
     } else {
       options.physics = { enabled: false };
