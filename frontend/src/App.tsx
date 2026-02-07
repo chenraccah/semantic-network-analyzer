@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Moon, Sun, ChevronDown, ChevronUp, ArrowRight, Upload } from 'lucide-react';
+import { Moon, Sun, ChevronDown, ChevronUp, Upload, Network, FileUp, Settings, Sparkles, BarChart3, CheckCircle2 } from 'lucide-react';
 import { FileUpload } from './components/FileUpload';
 import { ConfigPanel } from './components/ConfigPanel';
 import { NetworkGraph } from './components/NetworkGraph';
@@ -8,6 +8,7 @@ import { DataTable } from './components/DataTable';
 import { ControlPanel } from './components/ControlPanel';
 import { ChatPanel } from './components/ChatPanel';
 import { AuthForm } from './components/AuthForm';
+import { LandingPage } from './components/LandingPage';
 import { UsageBanner } from './components/UsageBanner';
 import { UpgradeModal } from './components/UpgradeModal';
 import { BillingPage } from './components/BillingPage';
@@ -101,6 +102,7 @@ function App() {
   const [vizState, setVizState] = useState<VisualizationState>(DEFAULT_VIZ_STATE);
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const [showLanding, setShowLanding] = useState(true);
+  const [showAuthForm, setShowAuthForm] = useState(false);
   const [showBillingPage, setShowBillingPage] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -446,25 +448,33 @@ function App() {
     });
   }, [analysisData, focusedCluster]);
 
-  // Apply ego-network filter and exclude hidden words
-  const displayData = useMemo((): ComparisonNode[] => {
+  // Apply ego-network filter (for both table and graph base data)
+  const filteredData = useMemo((): ComparisonNode[] => {
     let data = clusterFilteredData;
     if (egoNode && analysisResult) {
       const ego = computeEgoNetwork(egoNode, data, analysisResult.edges, egoHops);
       data = ego.nodes;
     }
-    if (filterState.hiddenWords.size > 0) {
-      data = data.filter(n => !filterState.hiddenWords.has(n.word));
-    }
     return data;
-  }, [clusterFilteredData, egoNode, egoHops, analysisResult, filterState.hiddenWords]);
+  }, [clusterFilteredData, egoNode, egoHops, analysisResult]);
+
+  // Data for the graph — excludes hidden words
+  const graphData = useMemo((): ComparisonNode[] => {
+    if (filterState.hiddenWords.size === 0) return filteredData;
+    return filteredData.filter(n => !filterState.hiddenWords.has(n.word));
+  }, [filteredData, filterState.hiddenWords]);
+
+  // Data for the table — includes all words (hidden ones shown with indicator)
+  const tableData = useMemo((): ComparisonNode[] => {
+    return filteredData;
+  }, [filteredData]);
 
   const displayEdges = useMemo((): NetworkEdge[] => {
     if (!analysisResult) return [];
     const edges = analysisResult.edges;
-    const nodeWords = new Set(displayData.map(n => n.word));
+    const nodeWords = new Set(graphData.map(n => n.word));
     return edges.filter(e => nodeWords.has(e.from) && nodeWords.has(e.to));
-  }, [analysisResult, displayData]);
+  }, [analysisResult, graphData]);
 
   const getSharedWordsCount = () => {
     if (!analysisResult) return 0;
@@ -480,8 +490,17 @@ function App() {
     );
   }
 
+  // Not logged in - show landing page or auth form
   if (!user) {
-    return <AuthForm />;
+    if (showAuthForm) {
+      return <AuthForm onBack={() => setShowAuthForm(false)} />;
+    }
+    return (
+      <LandingPage
+        onGetStarted={() => setShowAuthForm(true)}
+        onSignIn={() => setShowAuthForm(true)}
+      />
+    );
   }
 
   return (
@@ -538,23 +557,119 @@ function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* Landing Page */}
+        {/* Landing Page - Post Login */}
         {showLanding && !analysisResult && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="text-center max-w-xl">
+          <div className="py-12">
+            {/* Welcome Section */}
+            <div className="text-center max-w-3xl mx-auto mb-12">
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-purple-600 mb-6 shadow-lg">
+                <Network className="w-10 h-10 text-white" />
+              </div>
               <h2 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-                Analyze Semantic Networks
+                Ready to Analyze Your Data
               </h2>
-              <p className="text-lg text-gray-500 dark:text-gray-400 mb-8">
-                Upload your text data, build co-occurrence networks, and discover patterns across groups.
+              <p className="text-lg text-gray-500 dark:text-gray-400">
+                Transform your text data into interactive semantic networks and discover hidden patterns.
               </p>
+            </div>
+
+            {/* Quick Start Steps */}
+            <div className="grid md:grid-cols-4 gap-6 mb-12">
+              {[
+                { icon: FileUp, title: 'Upload Files', desc: 'CSV or Excel with text data' },
+                { icon: Settings, title: 'Configure', desc: 'Set thresholds and options' },
+                { icon: Sparkles, title: 'Analyze', desc: 'Build semantic networks' },
+                { icon: BarChart3, title: 'Explore', desc: 'Visualize and export' }
+              ].map((step, i) => (
+                <div key={i} className="relative">
+                  {i < 3 && (
+                    <div className="hidden md:block absolute top-8 left-full w-full h-0.5 bg-gradient-to-r from-primary-200 to-transparent dark:from-primary-800 -translate-x-8 z-0" />
+                  )}
+                  <div className="relative z-10 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-100 dark:border-gray-700 text-center">
+                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-primary-50 dark:bg-primary-900/30 text-primary-500 mb-4">
+                      <step.icon className="w-6 h-6" />
+                    </div>
+                    <div className="text-xs font-bold text-primary-500 mb-1">STEP {i + 1}</div>
+                    <h3 className="font-semibold text-gray-900 dark:text-gray-100">{step.title}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{step.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Feature Cards */}
+            <div className="grid md:grid-cols-3 gap-6 mb-12">
+              <div className="bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl p-6 text-white">
+                <h3 className="text-lg font-semibold mb-2">Multi-Group Comparison</h3>
+                <p className="text-white/90 text-sm">
+                  Compare semantic patterns across up to {effectiveMaxGroups} different groups or time periods.
+                </p>
+              </div>
+              <div className="bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl p-6 text-white">
+                <h3 className="text-lg font-semibold mb-2">Advanced Clustering</h3>
+                <p className="text-white/90 text-sm">
+                  Discover communities using Louvain algorithm with customizable resolution.
+                </p>
+              </div>
+              <div className="bg-gradient-to-br from-orange-500 to-red-500 rounded-2xl p-6 text-white">
+                <h3 className="text-lg font-semibold mb-2">AI-Powered Insights</h3>
+                <p className="text-white/90 text-sm">
+                  Enable semantic analysis to find conceptually similar terms beyond co-occurrence.
+                </p>
+              </div>
+            </div>
+
+            {/* CTA */}
+            <div className="text-center">
               <button
                 onClick={() => setShowLanding(false)}
-                className="inline-flex items-center gap-2 px-8 py-3 bg-primary-500 text-white rounded-lg font-semibold text-lg hover:bg-primary-600 transition-colors"
+                className="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-primary-500 to-purple-600 text-white rounded-xl font-semibold text-lg hover:from-primary-600 hover:to-purple-700 transition-all shadow-lg shadow-primary-500/25"
               >
-                Get Started
-                <ArrowRight className="w-5 h-5" />
+                <FileUp className="w-5 h-5" />
+                Start New Analysis
               </button>
+              {canSaveAnalyses() && (
+                <button
+                  onClick={() => setShowHistory(true)}
+                  className="ml-4 inline-flex items-center gap-2 px-6 py-4 border-2 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  Load Previous Analysis
+                </button>
+              )}
+            </div>
+
+            {/* Tips */}
+            <div className="mt-12 bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-6">
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                Quick Tips for Best Results
+              </h3>
+              <div className="grid md:grid-cols-2 gap-4 text-sm">
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mt-0.5">1</div>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    <strong className="text-gray-900 dark:text-gray-200">Clean your data first.</strong> Remove irrelevant columns and ensure text is in a single column.
+                  </p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mt-0.5">2</div>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    <strong className="text-gray-900 dark:text-gray-200">Use word mappings.</strong> Consolidate variations like "AI" and "artificial intelligence".
+                  </p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mt-0.5">3</div>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    <strong className="text-gray-900 dark:text-gray-200">Adjust the min score threshold.</strong> Higher values show only stronger connections.
+                  </p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mt-0.5">4</div>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    <strong className="text-gray-900 dark:text-gray-200">Enable semantic analysis</strong> for richer connections (may take longer for large files).
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -750,7 +865,7 @@ function App() {
                 </div>
                 <div className="text-center">
                   <div className="text-3xl font-bold text-primary-600 dark:text-primary-400">
-                    {displayData.length}
+                    {graphData.length}
                   </div>
                   <div className="text-sm text-gray-500 dark:text-gray-400">Visible</div>
                 </div>
@@ -798,7 +913,7 @@ function App() {
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
               <NetworkGraph
                 ref={graphRef}
-                nodes={displayData}
+                nodes={graphData}
                 edges={displayEdges}
                 filterState={filterState}
                 visualizationState={vizState}
@@ -817,7 +932,7 @@ function App() {
             {/* Data Table */}
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
               <DataTable
-                data={displayData}
+                data={tableData}
                 filterState={filterState}
                 groupNames={analysisResult.group_names}
                 groupKeys={analysisResult.group_keys}
@@ -832,7 +947,7 @@ function App() {
 
             {/* Chat Panel */}
             <ChatPanel
-              analysisData={displayData}
+              analysisData={graphData}
               stats={analysisResult.stats}
               groupNames={analysisResult.group_names}
               groupKeys={analysisResult.group_keys}

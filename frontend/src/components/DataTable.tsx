@@ -322,25 +322,26 @@ export function DataTable({
   const Row = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
     const node = displayData[index];
     const isHighlighted = highlightedNode === node.word;
+    const isHidden = filterState.hiddenWords.has(node.word);
 
     return (
       <div
         style={{ ...style, width: totalWidth }}
-        className={`flex items-center group border-b border-gray-100 dark:border-gray-700 ${isHighlighted ? 'ring-2 ring-yellow-400 bg-yellow-50 dark:bg-yellow-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+        className={`flex items-center group border-b border-gray-100 dark:border-gray-700 ${isHighlighted ? 'ring-2 ring-yellow-400 bg-yellow-50 dark:bg-yellow-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isHidden ? 'opacity-50' : ''}`}
       >
-        {/* Hide */}
+        {/* Hide/Show toggle */}
         <div style={{ width: HIDE_COL_W, minWidth: HIDE_COL_W }} className="flex-shrink-0 text-center px-2">
           <button
             onClick={() => onToggleVisibility(node.word)}
-            className="visibility-toggle visible"
+            className={`visibility-toggle ${isHidden ? 'hidden' : 'visible'}`}
           >
-            Hide
+            {isHidden ? 'Show' : 'Hide'}
           </button>
         </div>
         {/* Word */}
         <div
           style={{ width: WORD_COL_W, minWidth: WORD_COL_W }}
-          className={`flex-shrink-0 px-3 font-medium truncate text-gray-900 dark:text-gray-100 ${onNodeClick ? 'cursor-pointer hover:text-primary-600 dark:hover:text-primary-400' : ''}`}
+          className={`flex-shrink-0 px-3 font-medium truncate text-gray-900 dark:text-gray-100 ${isHidden ? 'line-through' : ''} ${onNodeClick ? 'cursor-pointer hover:text-primary-600 dark:hover:text-primary-400' : ''}`}
           onClick={() => onNodeClick?.(node.word)}
           title={node.word}
         >
@@ -358,7 +359,7 @@ export function DataTable({
         ))}
       </div>
     );
-  }, [displayData, highlightedNode, columns, totalWidth, onToggleVisibility, onNodeClick]);
+  }, [displayData, highlightedNode, columns, totalWidth, onToggleVisibility, onNodeClick, filterState.hiddenWords]);
 
   return (
     <div className="p-4">

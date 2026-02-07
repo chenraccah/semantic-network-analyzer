@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { ArrowLeft, Network } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 type AuthMode = 'login' | 'signup';
@@ -17,6 +18,10 @@ interface SignUpData {
   useCase: string;
 }
 
+interface AuthFormProps {
+  onBack?: () => void;
+}
+
 const initialSignUpData: SignUpData = {
   email: '',
   password: '',
@@ -27,7 +32,7 @@ const initialSignUpData: SignUpData = {
   useCase: '',
 };
 
-export function AuthForm() {
+export function AuthForm({ onBack }: AuthFormProps) {
   const { signIn, signUp, signInWithOAuth } = useAuth();
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
@@ -105,16 +110,29 @@ export function AuthForm() {
   // Sign In Form
   if (mode === 'login') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center px-4">
         <div className="max-w-md w-full">
-          <div className="bg-white rounded-lg shadow-lg p-8">
+          {/* Back button */}
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 font-medium"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Home
+            </button>
+          )}
+          <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
             {/* Header */}
             <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-purple-600 mb-4">
+                <Network className="w-8 h-8 text-white" />
+              </div>
               <h1 className="text-2xl font-bold text-gray-900">
-                Semantic Network Analyzer
+                Welcome Back
               </h1>
               <p className="text-gray-500 mt-2">
-                Sign in to your account
+                Sign in to continue to your dashboard
               </p>
             </div>
 
@@ -212,6 +230,16 @@ export function AuthForm() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center px-4 py-12">
       <div className="max-w-2xl w-full">
+        {/* Back button */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 text-white/80 hover:text-white mb-6 font-medium"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Home
+          </button>
+        )}
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
           <div className="bg-gray-900 px-8 py-6">
